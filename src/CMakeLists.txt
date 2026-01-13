@@ -1,3 +1,4 @@
+cmake_minimum_required(VERSION 3.16)
 find_package(Qt6 REQUIRED COMPONENTS Widgets Sql)
 
 add_executable(lub_gen
