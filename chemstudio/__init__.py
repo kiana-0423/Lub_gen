@@ -1,0 +1,2 @@
+"""chemstudio package."""
+

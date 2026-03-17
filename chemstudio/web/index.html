@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>chemstudio Editor</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4f6fb;
+        --panel: #ffffff;
+        --line: #cdd6e3;
+        --ink: #17212b;
+        --muted: #5e6b7a;
+        --accent: #0f766e;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", sans-serif;
+        background: linear-gradient(135deg, #eef4f8, #f9fbfd);
+        color: var(--ink);
+      }
+      .shell {
+        display: grid;
+        grid-template-rows: auto 1fr;
+        height: 100vh;
+      }
+      .toolbar {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        padding: 12px 16px;
+        background: rgba(255, 255, 255, 0.92);
+        border-bottom: 1px solid var(--line);
+      }
+      .badge {
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: #d9f2ee;
+        color: #0b5d57;
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .workspace {
+        display: grid;
+        grid-template-columns: 1.3fr 1fr;
+        gap: 16px;
+        padding: 16px;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 16px;
+        box-shadow: 0 12px 36px rgba(20, 33, 48, 0.08);
+      }
+      .title {
+        margin: 0 0 12px 0;
+        font-size: 18px;
+      }
+      .hint {
+        margin-top: 0;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+      label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      input, textarea {
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: #fcfdff;
+        color: var(--ink);
+      }
+      textarea {
+        min-height: 220px;
+        resize: vertical;
+      }
+      .row {
+        margin-bottom: 14px;
+      }
+      .preview {
+        white-space: pre-wrap;
+        font-family: Consolas, monospace;
+        background: #f8fafc;
+        border-radius: 12px;
+        padding: 14px;
+        min-height: 160px;
+        border: 1px dashed var(--line);
+      }
+    </style>
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="toolbar">
+        <strong>chemstudio</strong>
+        <span class="badge">Ketcher Placeholder</span>
+        <span>TODO: replace this page with bundled Ketcher assets in `web/ketcher/`.</span>
+      </div>
+      <div class="workspace">
+        <section class="panel">
+          <h1 class="title">Molecule Editor</h1>
+          <p class="hint">
+            MVP 阶段先用本地占位编辑器替代 Ketcher，保持 Qt WebEngine + WebChannel
+            集成方式不变。后续只需要把这里切换为真实 Ketcher 页面并复用 bridge。
+          </p>
+          <div class="row">
+            <label for="name">Molecule Name</label>
+            <input id="name" placeholder="e.g. Aspirin" />
+          </div>
+          <div class="row">
+            <label for="smiles">SMILES</label>
+            <input id="smiles" placeholder="e.g. CC(=O)OC1=CC=CC=C1C(=O)O" />
+          </div>
+          <div class="row">
+            <label for="molblock">MolBlock / Notes</label>
+            <textarea id="molblock" placeholder="Paste mol block here when available"></textarea>
+          </div>
+        </section>
+        <section class="panel">
+          <h2 class="title">Live Structure Payload</h2>
+          <div id="preview" class="preview"></div>
+        </section>
+      </div>
+    </div>
+    <script src="./bridge.js"></script>
+  </body>
+</html>
+
