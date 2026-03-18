@@ -1,0 +1,2 @@
+[console_scripts]
+chemstudio = chemstudio.app:main

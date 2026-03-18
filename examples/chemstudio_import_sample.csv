@@ -1,0 +1,5 @@
+code,name,smiles,is_hidden,notes,boiling_point,parameter:target_score,parameters
+M-001,ethanol,CCO,false,baseline solvent,78.3,46,"{""family"":""alcohol"",""density"":0.789,""viscosity"":1.07}"
+M-002,propanol,CCCO,false,mid-chain alcohol,97.0,60,"{""family"":""alcohol"",""density"":0.803,""viscosity"":1.95}"
+M-003,butanol,CCCCO,true,hidden example row,117.7,74,"{""family"":""alcohol"",""density"":0.81,""viscosity"":2.95}"
+M-004,acetone,CC(=O)C,false,ketone example,56.1,38,"{""family"":""ketone"",""density"":0.784,""viscosity"":0.32}"

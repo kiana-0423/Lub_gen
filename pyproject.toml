@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chemstudio"
+version = "0.2.0"
+description = "ChemStudio core data and prediction services."
+requires-python = ">=3.11"
+dependencies = [
+  "SQLAlchemy>=2.0",
+  "pandas>=2.2",
+  "scikit-learn>=1.5",
+  "joblib>=1.4",
+  "openpyxl>=3.1",
+  "rdkit>=2024.3",
+]
+
+[project.optional-dependencies]
+ui = ["PySide6>=6.7"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+chemstudio = "chemstudio.app:main"
+
+[tool.pytest.ini_options]
+testpaths = ["chemstudio/tests"]
+
+[tool.setuptools.packages.find]
+include = ["chemstudio*"]

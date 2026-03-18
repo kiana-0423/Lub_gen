@@ -1,0 +1,14 @@
+Metadata-Version: 2.4
+Name: chemstudio
+Version: 0.2.0
+Summary: ChemStudio core data and prediction services.
+Requires-Python: >=3.11
+Requires-Dist: SQLAlchemy>=2.0
+Requires-Dist: pandas>=2.2
+Requires-Dist: scikit-learn>=1.5
+Requires-Dist: joblib>=1.4
+Requires-Dist: rdkit>=2024.3
+Provides-Extra: ui
+Requires-Dist: PySide6>=6.7; extra == "ui"
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
