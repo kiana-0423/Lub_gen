@@ -39,7 +39,9 @@ CREATE TABLE IF NOT EXISTS property_data (
 CREATE TABLE IF NOT EXISTS formulas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     formula_name TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
     composition_json TEXT NOT NULL,
+    conditions_json TEXT NOT NULL DEFAULT '{}',
     predicted_property_json TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
@@ -76,7 +78,28 @@ class DatabaseManager:
         """Create required tables and indexes."""
         with self.connect() as connection:
             connection.executescript(SCHEMA_SQL)
+            self._migrate_schema(connection)
             connection.commit()
+
+    def _migrate_schema(self, connection: sqlite3.Connection) -> None:
+        """Apply lightweight schema migrations required by newer formula features."""
+        self._ensure_column(connection, "formulas", "note", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column(connection, "formulas", "conditions_json", "TEXT NOT NULL DEFAULT '{}'")
+
+    def _ensure_column(
+        self,
+        connection: sqlite3.Connection,
+        table_name: str,
+        column_name: str,
+        column_definition: str,
+    ) -> None:
+        columns = {
+            str(row["name"])
+            for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+        }
+        if column_name in columns:
+            return
+        connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}")
 
     def count_rows(self, table_name: str) -> int:
         """Return row count for a table."""
@@ -276,18 +299,22 @@ class DatabaseManager:
         formula_name: str,
         composition: list[dict[str, object]],
         predicted_properties: dict[str, float],
+        note: str = "",
+        conditions: dict[str, float] | None = None,
     ) -> int:
         """Persist a predicted formula configuration."""
         created_at = datetime.now(timezone.utc).isoformat()
         with self.connect() as connection:
             cursor = connection.execute(
                 """
-                INSERT INTO formulas (formula_name, composition_json, predicted_property_json, created_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO formulas (formula_name, note, composition_json, conditions_json, predicted_property_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     formula_name,
+                    note,
                     json.dumps(composition, ensure_ascii=False, indent=2),
+                    json.dumps(conditions or {}, ensure_ascii=False, indent=2),
                     json.dumps(predicted_properties, ensure_ascii=False, indent=2),
                     created_at,
                 ),
@@ -295,12 +322,29 @@ class DatabaseManager:
             connection.commit()
             return int(cursor.lastrowid)
 
+    def save_formulation(
+        self,
+        formula_name: str,
+        note: str,
+        composition: list[dict[str, object]],
+        target_values: dict[str, float],
+        conditions: dict[str, float] | None = None,
+    ) -> int:
+        """Persist a formulation record used for formula learning and training."""
+        return self.save_formula(
+            formula_name=formula_name,
+            note=note,
+            composition=composition,
+            conditions=conditions,
+            predicted_properties=target_values,
+        )
+
     def list_formulas(self, limit: int = 100) -> list[dict[str, object]]:
         """Return recently saved formulas."""
         with self.connect() as connection:
             rows = connection.execute(
                 """
-                SELECT id, formula_name, composition_json, predicted_property_json, created_at
+                SELECT id, formula_name, note, composition_json, conditions_json, predicted_property_json, created_at
                 FROM formulas
                 ORDER BY id DESC
                 LIMIT ?
@@ -308,3 +352,27 @@ class DatabaseManager:
                 (limit,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def list_formulations(self, limit: int = 200) -> list[dict[str, object]]:
+        """Return recently saved formulations for the formula-design module."""
+        return self.list_formulas(limit=limit)
+
+    def get_formulation(self, formulation_id: int) -> dict[str, object] | None:
+        """Return one saved formulation row."""
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id, formula_name, note, composition_json, conditions_json, predicted_property_json, created_at
+                FROM formulas
+                WHERE id = ?
+                """,
+                (formulation_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def delete_formulation(self, formulation_id: int) -> bool:
+        """Delete a saved formulation."""
+        with self.connect() as connection:
+            cursor = connection.execute("DELETE FROM formulas WHERE id = ?", (formulation_id,))
+            connection.commit()
+            return cursor.rowcount > 0

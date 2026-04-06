@@ -34,7 +34,9 @@ class FormulaRecord:
 
     id: int
     formula_name: str
+    note: str
     composition_json: str
+    conditions_json: str
     predicted_property_json: str
     created_at: str
 
