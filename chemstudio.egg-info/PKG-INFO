@@ -7,6 +7,7 @@ Requires-Dist: SQLAlchemy>=2.0
 Requires-Dist: pandas>=2.2
 Requires-Dist: scikit-learn>=1.5
 Requires-Dist: joblib>=1.4
+Requires-Dist: openpyxl>=3.1
 Requires-Dist: rdkit>=2024.3
 Provides-Extra: ui
 Requires-Dist: PySide6>=6.7; extra == "ui"

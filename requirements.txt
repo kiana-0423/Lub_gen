@@ -1,0 +1,11 @@
+joblib>=1.4
+matplotlib>=3.9
+numpy>=2.0
+openpyxl>=3.1
+pandas>=2.2
+PySide6>=6.7
+scikit-learn>=1.5
+
+# Optional dependencies
+# rdkit>=2024.3
+# xgboost>=2.1

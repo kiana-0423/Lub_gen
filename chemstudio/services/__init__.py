@@ -1,8 +1,15 @@
 from __future__ import annotations
 
-from chemstudio.services.descriptor_service import DescriptorService
-from chemstudio.services.import_service import ImportFileService
-from chemstudio.services.model_service import ModelService
-from chemstudio.services.molecule_service import MoleculeService
+from .data_import_service import DataImportService
+from .feature_service import FeatureService
+from .formula_service import FormulaService
+from .model_service import ModelService
+from .visualization_service import VisualizationService
 
-__all__ = ["DescriptorService", "ImportFileService", "ModelService", "MoleculeService"]
+__all__ = [
+    "DataImportService",
+    "FeatureService",
+    "FormulaService",
+    "ModelService",
+    "VisualizationService",
+]

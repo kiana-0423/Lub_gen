@@ -1,0 +1,13 @@
+name,smiles,source,feature_mol_wt,feature_mol_logp,feature_tpsa,feature_h_donors,feature_h_acceptors,feature_rotatable_bonds,feature_ring_count,feature_fraction_csp3,property_conductivity,property_viscosity,property_capacity
+Water,O,mock_seed,18.02,-1.38,31.50,0,0,0,0,0.00,14.80,1.00,88.00
+Ethanol,CCO,mock_seed,46.07,-0.31,20.23,1,1,0,0,1.00,9.50,1.20,102.00
+Acetonitrile,CC#N,mock_seed,41.05,-0.34,23.79,0,1,0,0,0.50,12.20,0.45,98.00
+Dimethyl Carbonate,COC(=O)OC,mock_seed,90.08,0.20,35.53,0,3,2,0,1.00,7.10,0.60,105.00
+Ethylene Carbonate,O=C1OCCO1,mock_seed,88.06,-0.20,35.53,0,3,0,1,0.50,10.80,1.92,120.00
+Propylene Carbonate,CC1COC(=O)O1,mock_seed,102.09,0.10,35.53,0,3,1,1,0.75,9.40,2.50,118.00
+Dimethyl Sulfoxide,CS(=O)C,mock_seed,78.13,-1.35,17.07,0,1,0,0,1.00,11.60,2.10,111.00
+Sulfolane,O=S1(=O)CCCC1,mock_seed,120.17,-0.70,34.14,0,2,0,1,1.00,8.60,9.80,126.00
+Tetrahydrofuran,C1CCOC1,mock_seed,72.11,0.46,9.23,0,1,0,1,1.00,5.80,0.55,97.00
+NMP,CN1CCCC1=O,mock_seed,99.13,-0.38,20.31,0,2,0,1,1.00,10.20,1.67,113.00
+Diethyl Carbonate,CCOC(=O)OCC,mock_seed,118.13,1.00,26.30,0,3,4,0,1.00,6.40,0.75,107.00
+Gamma Butyrolactone,O=C1OCCC1,mock_seed,86.09,-0.40,26.30,0,2,0,1,0.75,9.10,1.70,116.00
