@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import sys
 
 from chemstudio.database.db_manager import DatabaseManager
@@ -15,12 +16,26 @@ def configure_qt_runtime() -> None:
         os.environ.setdefault("LIBGL_ALWAYS_SOFTWARE", "1")
         os.environ.setdefault("QT_OPENGL", "software")
         os.environ.setdefault("QT_QUICK_BACKEND", "software")
-        os.environ.setdefault("QSG_RHI_BACKEND", "software")
 
-        existing_flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
-        fallback_flags = ["--disable-gpu", "--disable-gpu-compositing"]
-        merged = " ".join([existing_flags, *[flag for flag in fallback_flags if flag not in existing_flags]]).strip()
-        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = merged
+        existing_flags = shlex.split(os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", ""))
+        conflicting_prefixes = ("--use-gl=", "--use-angle=")
+        conflicting_flags = {
+            "--disable-gpu",
+            "--disable-gpu-compositing",
+            "--disable-webgl",
+            "--enable-webgl",
+            "--ignore-gpu-blocklist",
+        }
+        filtered_flags = [
+            flag
+            for flag in existing_flags
+            if flag not in conflicting_flags and not flag.startswith(conflicting_prefixes)
+        ]
+        fallback_flags = [
+            "--disable-gpu",
+            "--disable-gpu-compositing",
+        ]
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = " ".join(filtered_flags + fallback_flags).strip()
 
         if hasattr(os, "geteuid") and os.geteuid() == 0:
             os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
