@@ -11,6 +11,7 @@ class Base(DeclarativeBase):
 
 
 def utcnow() -> datetime:
+    """返回带 UTC 时区信息的当前时间。"""
     return datetime.now(UTC)
 
 
@@ -46,6 +47,7 @@ class Molecule(Base, TimestampMixin):
 
     @property
     def display_name(self) -> str:
+        """返回前端展示时优先使用的分子名称。"""
         return self.name or self.code or self.canonical_smiles
 
 

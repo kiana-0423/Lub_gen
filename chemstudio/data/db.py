@@ -16,6 +16,7 @@ _SESSION_FACTORIES: dict[str, sessionmaker] = {}
 
 
 def get_database_url(database_url: str | None = None) -> str:
+    """解析最终数据库地址，优先显式参数，其次环境变量。"""
     if database_url:
         return database_url
 
@@ -27,6 +28,7 @@ def get_database_url(database_url: str | None = None) -> str:
 
 
 def _sqlite_path_from_url(database_url: str) -> Path | None:
+    """从 SQLite URL 中提取本地文件路径，非文件型地址时返回空。"""
     sqlite_prefix = "sqlite:///"
     if not database_url.startswith(sqlite_prefix):
         return None
@@ -37,6 +39,7 @@ def _sqlite_path_from_url(database_url: str) -> Path | None:
 
 
 def get_engine(database_url: str | None = None) -> Engine:
+    """按数据库地址获取并缓存 SQLAlchemy Engine。"""
     resolved_url = get_database_url(database_url)
     engine = _ENGINES.get(resolved_url)
     if engine is None:
@@ -47,6 +50,7 @@ def get_engine(database_url: str | None = None) -> Engine:
 
 
 def get_session_factory(database_url: str | None = None) -> sessionmaker:
+    """按数据库地址获取并缓存 SQLAlchemy Session 工厂。"""
     resolved_url = get_database_url(database_url)
     factory = _SESSION_FACTORIES.get(resolved_url)
     if factory is None:
@@ -62,6 +66,7 @@ def get_session_factory(database_url: str | None = None) -> sessionmaker:
 
 
 def initialize_database(database_url: str | None = None) -> Path | str:
+    """初始化数据库表结构，并确保 SQLite 文件目录存在。"""
     resolved_url = get_database_url(database_url)
     sqlite_path = _sqlite_path_from_url(resolved_url)
     if sqlite_path is not None:
@@ -73,6 +78,7 @@ def initialize_database(database_url: str | None = None) -> Path | str:
 
 @contextmanager
 def session_scope(database_url: str | None = None):
+    """提供带自动提交和回滚处理的数据库会话上下文。"""
     session = get_session_factory(database_url)()
     try:
         yield session

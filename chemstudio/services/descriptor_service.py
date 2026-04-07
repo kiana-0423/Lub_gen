@@ -18,6 +18,7 @@ except ImportError:  # pragma: no cover
 
 class DescriptorService:
     def calculate(self, smiles: str) -> dict[str, float | int]:
+        """基于 SMILES 计算一组常用的 RDKit 描述符。"""
         if Chem is None:
             raise ValueError("RDKit is not installed.")
 
@@ -42,6 +43,7 @@ class DescriptorService:
         *,
         database_url: str | None = None,
     ) -> dict[str, float | int]:
+        """计算描述符并写回数据库中的分子描述符记录。"""
         descriptors = self.calculate(smiles)
         with session_scope(database_url) as session:
             repository = MoleculeRepository(session)
@@ -56,6 +58,7 @@ class DescriptorService:
         *,
         database_url: str | None = None,
     ) -> dict[str, float | int]:
+        """优先复用已有描述符记录，缺失时再触发计算和持久化。"""
         if descriptor_record:
             return dict(descriptor_record)
         return self.calculate_and_persist(molecule_id, smiles, database_url=database_url)

@@ -17,6 +17,7 @@ class FormulaService:
     DEFAULT_TARGET_FIELDS = ["conductivity", "capacity", "viscosity", "stability"]
 
     def __init__(self, db_manager: DatabaseManager) -> None:
+        """保存配方模块依赖的数据库访问对象。"""
         self.db_manager = db_manager
 
     def get_model_catalog(self) -> list[dict[str, Any]]:
@@ -309,6 +310,7 @@ class FormulaService:
         )
 
     def _deserialize_formulation_row(self, row: dict[str, Any]) -> dict[str, Any]:
+        """把数据库原始配方记录转换成带解析结果的业务对象。"""
         composition = self._safe_json_loads(row.get("composition_json"), default=[])
         conditions = self._safe_json_loads(row.get("conditions_json"), default={})
         predicted_properties = self._safe_json_loads(row.get("predicted_property_json"), default={})
@@ -329,6 +331,7 @@ class FormulaService:
         }
 
     def _safe_json_loads(self, raw_value: Any, *, default: Any) -> Any:
+        """安全解析 JSON 字段，失败时返回给定默认值。"""
         if raw_value in {None, ""}:
             return default
         try:

@@ -18,10 +18,12 @@ except ImportError:  # pragma: no cover
 
 class MoleculeService:
     def __init__(self, repository_cls=MoleculeRepository, database_url: str | None = None) -> None:
+        """配置仓储类型和数据库地址，供分子业务流程复用。"""
         self.repository_cls = repository_cls
         self.database_url = database_url
 
     def validate_and_standardize(self, payload: Mapping[str, object]) -> dict[str, object]:
+        """校验分子输入并补全规范化后的结构化字段。"""
         smiles = str(payload.get("smiles") or payload.get("canonical_smiles") or "").strip()
         if not smiles:
             raise ValueError("SMILES is required.")
@@ -70,6 +72,7 @@ class MoleculeService:
         }
 
     def save_molecule(self, payload: Mapping[str, object], molecule_id: int | None = None) -> dict[str, object]:
+        """创建或更新分子记录，并返回序列化后的详情。"""
         initialize_database(self.database_url)
         standardized = self.validate_and_standardize(payload)
         with session_scope(self.database_url) as session:
@@ -81,17 +84,20 @@ class MoleculeService:
             return self._serialize_molecule(molecule, include_detail=True)
 
     def import_molecules(self, records: Iterable[Mapping[str, object]]) -> dict[str, object]:
+        """批量导入分子记录，并汇总返回保存结果。"""
         created_or_updated: list[dict[str, object]] = []
         for record in records:
             created_or_updated.append(self.save_molecule(record))
         return {"count": len(created_or_updated), "items": created_or_updated}
 
     def delete_molecule(self, molecule_id: int) -> bool:
+        """删除指定分子记录。"""
         with session_scope(self.database_url) as session:
             repository = self.repository_cls(session)
             return repository.delete_molecule(molecule_id)
 
     def set_hidden_state(self, molecule_id: int, hidden: bool) -> dict[str, object] | None:
+        """更新分子的隐藏状态，并返回更新后的详情。"""
         with session_scope(self.database_url) as session:
             repository = self.repository_cls(session)
             molecule = repository.set_hidden_state(molecule_id, hidden)
@@ -103,6 +109,7 @@ class MoleculeService:
             return self._serialize_molecule(molecule, include_detail=True)
 
     def get_molecule_detail(self, molecule_id: int) -> dict[str, object] | None:
+        """读取单个分子的完整详情。"""
         with session_scope(self.database_url) as session:
             repository = self.repository_cls(session)
             molecule = repository.get_molecule(molecule_id)
@@ -122,6 +129,7 @@ class MoleculeService:
         sort_by: str = "updated_at",
         descending: bool = True,
     ) -> dict[str, object]:
+        """按分页、过滤和排序条件返回分子列表。"""
         with session_scope(self.database_url) as session:
             repository = self.repository_cls(session)
             items, total = repository.list_molecules(
@@ -142,6 +150,7 @@ class MoleculeService:
             }
 
     def _serialize_molecule(self, molecule: Molecule | None, *, include_detail: bool) -> dict[str, object]:
+        """把 ORM 分子对象转换成接口层稳定的字典结构。"""
         if molecule is None:
             raise ValueError("Molecule does not exist.")
 

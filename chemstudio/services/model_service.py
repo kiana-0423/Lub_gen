@@ -17,6 +17,7 @@ class ModelService:
     """Coordinates training, persistence, and inference for regression models."""
 
     def __init__(self, db_manager: DatabaseManager, feature_service: FeatureService) -> None:
+        """保存训练流程需要的数据库和特征服务依赖。"""
         self.db_manager = db_manager
         self.feature_service = feature_service
 

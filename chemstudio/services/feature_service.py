@@ -24,6 +24,7 @@ class FeatureService:
     METADATA_COLUMNS = {"id", "name", "smiles", "source", "created_at"}
 
     def __init__(self, db_manager: DatabaseManager) -> None:
+        """保存数据库访问依赖，用于推断训练特征列。"""
         self.db_manager = db_manager
 
     @property

@@ -242,6 +242,7 @@ class VisualizationService:
     const errorMessage = {message_payload};
     let canvasState = null;
 
+    // 在 viewer 不可用时展示错误或状态消息。
     function showMessage(message) {{
       const status = document.getElementById("status");
       const viewer = document.getElementById("viewer");
@@ -250,6 +251,7 @@ class VisualizationService:
       viewer.style.display = "none";
     }}
 
+    // 恢复画布显示并清空状态消息。
     function clearMessage() {{
       const status = document.getElementById("status");
       const viewer = document.getElementById("viewer");
@@ -258,6 +260,7 @@ class VisualizationService:
       viewer.style.display = "block";
     }}
 
+    // 把 MolBlock 文本解析为可渲染的原子和键数据结构。
     function parseMolBlock(block) {{
       const lines = String(block || "").replace(/\\r/g, "").split("\\n");
       if (lines.length < 4) {{
@@ -335,6 +338,7 @@ class VisualizationService:
       return {{ atoms, bonds }};
     }}
 
+    // 按当前视角对三维点做旋转变换。
     function rotatePoint(point, rotationX, rotationY) {{
       const cosY = Math.cos(rotationY);
       const sinY = Math.sin(rotationY);
@@ -349,6 +353,7 @@ class VisualizationService:
       return {{ x: x1, y: y2, z: z2, element: point.element }};
     }}
 
+    // 把三维坐标投影到二维画布坐标系中。
     function projectPoint(point, width, height, zoom) {{
       const cameraDistance = 4.6;
       const perspective = (Math.min(width, height) * 0.34 * zoom) / Math.max(cameraDistance - point.z, 0.5);
@@ -360,6 +365,7 @@ class VisualizationService:
       }};
     }}
 
+    // 为常见元素分配稳定的渲染颜色。
     function getElementColor(element) {{
       const palette = {{
         H: "#d9e2f2",
@@ -377,6 +383,7 @@ class VisualizationService:
       return palette[element] || "#64748b";
     }}
 
+    // 根据键级绘制单键、双键或三键线段。
     function drawBond(context, firstPoint, secondPoint, bondOrder, firstColor, secondColor, lineWidth) {{
       const dx = secondPoint.x - firstPoint.x;
       const dy = secondPoint.y - firstPoint.y;
@@ -410,6 +417,7 @@ class VisualizationService:
       }}
     }}
 
+    // 把视角和缩放恢复到默认状态。
     function resetBuiltinView() {{
       if (!canvasState) {{
         return;
@@ -420,6 +428,7 @@ class VisualizationService:
       drawBuiltinViewer();
     }}
 
+    // 根据容器尺寸和像素比重置画布大小。
     function resizeBuiltinCanvas() {{
       if (!canvasState) {{
         return;
@@ -435,6 +444,7 @@ class VisualizationService:
       drawBuiltinViewer();
     }}
 
+    // 按当前结构、旋转和缩放状态重绘内置分子视图。
     function drawBuiltinViewer() {{
       if (!canvasState) {{
         return;
@@ -508,6 +518,7 @@ class VisualizationService:
       }}
     }}
 
+    // 绑定拖拽、滚轮和尺寸变化等交互行为。
     function attachBuiltinInteractions() {{
       if (!canvasState || canvasState.bound) {{
         return;
@@ -537,6 +548,7 @@ class VisualizationService:
         drawBuiltinViewer();
       }});
 
+      // 在指针释放或离开时结束拖拽状态。
       const stopDrag = (event) => {{
         if (!canvasState.dragging) {{
           return;
@@ -573,6 +585,7 @@ class VisualizationService:
       }}
     }}
 
+    // 初始化内置 Canvas 渲染器并触发首帧绘制。
     function renderBuiltinViewer() {{
       const container = document.getElementById("viewer");
       const structure = parseMolBlock(molBlock);
@@ -609,6 +622,7 @@ class VisualizationService:
       return true;
     }}
 
+    // 根据错误状态和结构数据选择最终的展示方式。
     function renderViewer() {{
       if (errorMessage) {{
         showMessage(errorMessage);
@@ -624,6 +638,7 @@ class VisualizationService:
       renderBuiltinViewer();
     }}
 
+    // 暴露给外部按钮调用的视角重置入口。
     window.resetView = function() {{
       resetBuiltinView();
     }};

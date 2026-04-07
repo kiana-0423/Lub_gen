@@ -10,9 +10,11 @@ from chemstudio.data.models import Molecule, MoleculeDescriptor, MoleculeParamet
 
 class MoleculeRepository:
     def __init__(self, session) -> None:
+        """保存当前请求对应的数据库会话。"""
         self.session = session
 
     def save_molecule(self, payload: Mapping[str, object], molecule_id: int | None = None) -> Molecule:
+        """创建或更新分子主记录及其参数字段。"""
         molecule = self._resolve_target_molecule(payload, molecule_id)
 
         if molecule is None:
@@ -37,6 +39,7 @@ class MoleculeRepository:
         return molecule
 
     def delete_molecule(self, molecule_id: int) -> bool:
+        """删除指定分子；不存在时返回 False。"""
         molecule = self.get_molecule(molecule_id)
         if molecule is None:
             return False
@@ -44,6 +47,7 @@ class MoleculeRepository:
         return True
 
     def set_hidden_state(self, molecule_id: int, hidden: bool) -> Molecule | None:
+        """更新分子的隐藏状态并返回对应实体。"""
         molecule = self.get_molecule(molecule_id)
         if molecule is None:
             return None
@@ -52,6 +56,7 @@ class MoleculeRepository:
         return molecule
 
     def get_molecule(self, molecule_id: int) -> Molecule | None:
+        """按主键读取分子，并预加载参数和描述符关系。"""
         stmt = (
             select(Molecule)
             .where(Molecule.id == molecule_id)
@@ -71,6 +76,7 @@ class MoleculeRepository:
         sort_by: str = "updated_at",
         descending: bool = True,
     ) -> tuple[list[Molecule], int]:
+        """按筛选、排序和分页条件返回分子列表与总数。"""
         filters = self._build_filters(
             keyword=keyword,
             include_hidden=include_hidden,
@@ -103,6 +109,7 @@ class MoleculeRepository:
         limit: int | None = None,
         offset: int = 0,
     ) -> list[Molecule]:
+        """返回可用于训练的数据候选分子集合。"""
         filters = self._build_filters(
             keyword=keyword,
             include_hidden=include_hidden,
@@ -125,6 +132,7 @@ class MoleculeRepository:
         return list(self.session.execute(stmt).unique().scalars().all())
 
     def save_descriptors(self, molecule_id: int, descriptors: Mapping[str, object]) -> MoleculeDescriptor:
+        """新增或覆盖指定分子的描述符记录。"""
         stmt = select(MoleculeDescriptor).where(MoleculeDescriptor.molecule_id == molecule_id)
         record = self.session.execute(stmt).scalar_one_or_none()
         if record is None:
@@ -136,6 +144,7 @@ class MoleculeRepository:
         return record
 
     def _resolve_target_molecule(self, payload: Mapping[str, object], molecule_id: int | None) -> Molecule | None:
+        """根据显式 ID、编码或标准 SMILES 定位需要更新的分子。"""
         if molecule_id is not None:
             molecule = self.get_molecule(molecule_id)
             if molecule is None:
@@ -157,6 +166,7 @@ class MoleculeRepository:
         return None
 
     def _replace_parameters(self, molecule: Molecule, parameters: Mapping[str, object]) -> None:
+        """用最新参数集合替换分子现有的键值对参数。"""
         existing = {item.key: item for item in molecule.parameters}
         normalized = {str(key): "" if value is None else str(value) for key, value in parameters.items()}
 
@@ -179,6 +189,7 @@ class MoleculeRepository:
         hidden_only: bool,
         parameter_filters: Mapping[str, object] | None,
     ) -> list[object]:
+        """组装分子列表查询所需的 SQLAlchemy 过滤条件。"""
         filters: list[object] = []
 
         if hidden_only:
@@ -226,6 +237,7 @@ class MoleculeRepository:
         return filters
 
     def _resolve_sort_column(self, sort_by: str):
+        """把排序字段名映射为对应的 ORM 列对象。"""
         allowed = {
             "id": Molecule.id,
             "name": Molecule.name,
@@ -238,6 +250,7 @@ class MoleculeRepository:
 
     @staticmethod
     def _clean_nullable(value: object) -> str | None:
+        """把可空文本统一清洗为字符串或 None。"""
         if value is None:
             return None
         result = str(value).strip()

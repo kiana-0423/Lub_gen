@@ -64,6 +64,7 @@ class DatabaseManager:
     """Encapsulates SQLite schema management and CRUD operations."""
 
     def __init__(self, db_path: Path | str) -> None:
+        """保存数据库文件路径，并提前创建父目录。"""
         self.db_path = Path(db_path)
         ensure_directory(self.db_path.parent)
 
@@ -93,6 +94,7 @@ class DatabaseManager:
         column_name: str,
         column_definition: str,
     ) -> None:
+        """在旧表缺失列时追加新列，避免重复迁移。"""
         columns = {
             str(row["name"])
             for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
@@ -124,6 +126,7 @@ class DatabaseManager:
         return inserted_ids
 
     def _insert_molecule_record(self, connection: sqlite3.Connection, record: MoleculeImportRecord) -> int:
+        """写入单个分子及其特征、属性明细行，并返回新 ID。"""
         created_at = datetime.now(timezone.utc).isoformat()
         cursor = connection.execute(
             """

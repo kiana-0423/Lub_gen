@@ -31,6 +31,7 @@ class DataImportService:
     }
 
     def __init__(self, db_manager: DatabaseManager) -> None:
+        """保存数据库访问依赖，供导入流程复用。"""
         self.db_manager = db_manager
 
     def import_file(self, file_path: str | Path) -> dict[str, object]:
@@ -106,6 +107,7 @@ class DataImportService:
         return True
 
     def _extract_text(self, row: pd.Series, mapped_columns: dict[str, str], aliases: set[str]) -> str:
+        """按照别名集合从当前行里提取第一个非空文本值。"""
         for original_name, normalized_name in mapped_columns.items():
             if normalized_name not in aliases:
                 continue
@@ -118,6 +120,7 @@ class DataImportService:
         return ""
 
     def _collect_numeric_values(self, row: pd.Series, columns: list[str]) -> dict[str, float]:
+        """读取指定列中的数值，并清理统一的特征或属性前缀。"""
         values: dict[str, float] = {}
         for column in columns:
             value = pd.to_numeric(row.get(column), errors="coerce")
