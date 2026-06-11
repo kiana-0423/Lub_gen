@@ -22,7 +22,7 @@ class FormulaService:
 
     def get_model_catalog(self) -> list[dict[str, Any]]:
         """Return model options for the formulation-training UI."""
-        return get_model_catalog()
+        return get_model_catalog("regression")
 
     def get_available_target_fields(self) -> list[str]:
         """Return default and previously-saved formulation target names."""

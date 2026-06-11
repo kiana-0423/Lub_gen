@@ -11,6 +11,15 @@ class MoleculeImportRecord:
     name: str
     smiles: str = ""
     source: str = ""
+    code: str | None = None
+    input_smiles: str = ""
+    canonical_smiles: str = ""
+    inchi: str = ""
+    inchikey: str = ""
+    molblock: str = ""
+    notes: str = ""
+    is_hidden: bool = False
+    parameters: dict[str, object] = field(default_factory=dict)
     features: dict[str, float] = field(default_factory=dict)
     properties: dict[str, float] = field(default_factory=dict)
 
@@ -24,6 +33,17 @@ class MoleculeDetail:
     smiles: str
     source: str
     created_at: str
+    code: str | None = None
+    input_smiles: str = ""
+    canonical_smiles: str = ""
+    inchi: str = ""
+    inchikey: str = ""
+    molblock: str = ""
+    notes: str = ""
+    is_hidden: bool = False
+    updated_at: str = ""
+    parameters: dict[str, object] = field(default_factory=dict)
+    descriptor_values: dict[str, object] = field(default_factory=dict)
     features: dict[str, float] = field(default_factory=dict)
     properties: dict[str, float] = field(default_factory=dict)
 
@@ -51,3 +71,20 @@ class ModelArtifactSummary:
     feature_names: list[str]
     metrics: dict[str, float]
     extra: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class ModelRecord:
+    """Persisted trained-model metadata."""
+
+    id: int
+    name: str
+    model_type: str
+    problem_type: str
+    target_name: str
+    feature_columns_json: str
+    metrics_json: str
+    training_config_json: str
+    artifact_path: str
+    created_at: str
+    updated_at: str

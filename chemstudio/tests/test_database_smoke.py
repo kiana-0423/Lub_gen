@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-from chemstudio.data.db import initialize_database, session_scope
-from chemstudio.data.models import ModelRecord, Molecule, MoleculeDescriptor, MoleculeParameter, Prediction
+from chemstudio.database.db_manager import DatabaseManager
 
 
 def test_database_initializes(chemstudio_env):
-    initialize_database()
-    with session_scope() as session:
-        assert session.query(Molecule).count() == 0
-        assert session.query(MoleculeParameter).count() == 0
-        assert session.query(MoleculeDescriptor).count() == 0
-        assert session.query(ModelRecord).count() == 0
-        assert session.query(Prediction).count() == 0
+    db_manager = DatabaseManager(chemstudio_env["database_path"])
+    db_manager.initialize_database()
+    assert db_manager.count_rows("molecules") == 0
+    assert db_manager.count_rows("molecule_parameters") == 0
+    assert db_manager.count_rows("molecule_descriptors") == 0
+    assert db_manager.count_rows("model_records") == 0
+    assert db_manager.count_rows("predictions") == 0

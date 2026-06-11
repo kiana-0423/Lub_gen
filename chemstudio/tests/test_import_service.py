@@ -4,11 +4,12 @@ import json
 
 import pandas as pd
 
-from chemstudio.services.import_service import ImportFileService
+from chemstudio.database.db_manager import DatabaseManager
+from chemstudio.services.data_import_service import DataImportService
 
 
-def test_import_service_loads_json_csv_and_excel(tmp_path):
-    service = ImportFileService()
+def test_data_import_service_loads_json_csv_and_excel(tmp_path):
+    service = DataImportService(DatabaseManager(tmp_path / "chemstudio.sqlite"))
 
     json_path = tmp_path / "molecules.json"
     json_path.write_text(
@@ -69,8 +70,8 @@ def test_import_service_loads_json_csv_and_excel(tmp_path):
     assert xlsx_records[0]["parameters"]["target_score"] == 74
 
 
-def test_import_service_skips_blank_rows_and_rejects_invalid_booleans(tmp_path):
-    service = ImportFileService()
+def test_data_import_service_skips_blank_rows_and_rejects_invalid_booleans(tmp_path):
+    service = DataImportService(DatabaseManager(tmp_path / "chemstudio.sqlite"))
 
     csv_path = tmp_path / "blank.csv"
     pd.DataFrame([{"code": None, "name": None, "smiles": None}]).to_csv(csv_path, index=False)

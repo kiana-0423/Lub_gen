@@ -43,7 +43,7 @@ def configure_qt_runtime() -> None:
 
 def bootstrap_database() -> DatabaseManager:
     """Create the SQLite database and load mock data if the database is empty."""
-    db_manager = DatabaseManager(AppConfig.DATABASE_PATH)
+    db_manager = DatabaseManager(AppConfig.database_path())
     db_manager.initialize_database()
     DataImportService(db_manager).seed_mock_data_if_empty()
     return db_manager

@@ -21,7 +21,20 @@ except ImportError:  # pragma: no cover
 class FeatureService:
     """Handles feature detection, descriptor generation, and input alignment."""
 
-    METADATA_COLUMNS = {"id", "name", "smiles", "source", "created_at"}
+    METADATA_COLUMNS = {
+        "id",
+        "code",
+        "name",
+        "smiles",
+        "input_smiles",
+        "canonical_smiles",
+        "inchi",
+        "inchikey",
+        "is_hidden",
+        "source",
+        "created_at",
+        "updated_at",
+    }
 
     def __init__(self, db_manager: DatabaseManager) -> None:
         """保存数据库访问依赖，用于推断训练特征列。"""
@@ -67,6 +80,18 @@ class FeatureService:
             "fraction_csp3": float(rdMolDescriptors.CalcFractionCSP3(molecule)),
         }
         return descriptors, "RDKit descriptors generated successfully."
+
+    def save_descriptors(self, molecule_id: int, descriptors: dict[str, object]) -> None:
+        """Persist descriptor values for a molecule."""
+        self.db_manager.save_descriptors(molecule_id, descriptors)
+
+    def compute_and_persist_descriptors(self, molecule_id: int, smiles: str) -> dict[str, float]:
+        """Compute descriptors and store them on the molecule detail record."""
+        descriptors, message = self.compute_descriptors(smiles)
+        if not descriptors:
+            raise ValueError(message)
+        self.save_descriptors(molecule_id, descriptors)
+        return descriptors
 
     def build_prediction_features(
         self,

@@ -35,7 +35,8 @@ project_root/
 │  ├─ app.py
 │  ├─ database/
 │  │  ├─ db_manager.py
-│  │  └─ models.py
+│  │  ├─ models.py
+│  │  └─ repositories/
 │  ├─ ml/
 │  │  ├─ trainer.py
 │  │  ├─ predictor.py
@@ -101,7 +102,7 @@ python -m chemstudio
 
 ## 说明
 
-- SQLite 数据库默认位于 `chemstudio/resources/chemstudio_mvp.sqlite`
+- SQLite 数据库默认位于 `chemstudio/resources/chemstudio.sqlite`，可通过 `CHEMSTUDIO_DATABASE_PATH` 覆盖
 - 已训练模型默认保存到 `chemstudio/resources/saved_models/`
 - RDKit 和 XGBoost 都是兼容式可选依赖，不安装也可以运行主体功能
 - 当前配方特征工程采用简单加权平均策略，代码结构已为后续更复杂规则预留扩展点

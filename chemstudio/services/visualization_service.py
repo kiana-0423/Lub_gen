@@ -81,6 +81,26 @@ class VisualizationService:
         axes.set_ylabel("Predicted")
         axes.grid(alpha=0.2)
 
+    def plot_confusion_matrix(
+        self,
+        axes: matplotlib.axes.Axes,
+        matrix: list[list[int]],
+        labels: list[object],
+    ) -> None:
+        """Plot a compact confusion-matrix heatmap."""
+        axes.clear()
+        image = axes.imshow(matrix, cmap="Blues")
+        axes.set_title("Confusion Matrix")
+        axes.set_xlabel("Predicted")
+        axes.set_ylabel("Actual")
+        tick_positions = range(len(labels))
+        axes.set_xticks(list(tick_positions), [str(label) for label in labels])
+        axes.set_yticks(list(tick_positions), [str(label) for label in labels])
+        for row_index, row_values in enumerate(matrix):
+            for column_index, value in enumerate(row_values):
+                axes.text(column_index, row_index, str(value), ha="center", va="center", color="#10233f")
+        axes.figure.colorbar(image, ax=axes, fraction=0.046, pad=0.04)
+
     @property
     def rdkit_available(self) -> bool:
         """Whether RDKit-based molecule rendering features are available."""

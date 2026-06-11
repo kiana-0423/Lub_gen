@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QComboBox,
     QLineEdit,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -67,12 +69,25 @@ class MoleculeDesignPage(BasePage):
         controls_form = QGridLayout(controls_box)
 
         self.target_combo = QComboBox()
+        self.target_combo.currentIndexChanged.connect(self._refresh_model_catalog)
         self.model_combo = QComboBox()
         self.test_size_spin = QDoubleSpinBox()
         self.test_size_spin.setDecimals(2)
         self.test_size_spin.setSingleStep(0.05)
         self.test_size_spin.setRange(0.1, 0.5)
         self.test_size_spin.setValue(0.2)
+        self.cv_checkbox = QCheckBox("启用交叉验证")
+        self.cv_fold_combo = QComboBox()
+        for fold_count in (3, 5, 10):
+            self.cv_fold_combo.addItem(str(fold_count), userData=fold_count)
+        self.cv_fold_combo.setCurrentIndex(1)
+        self.hp_checkbox = QCheckBox("启用超参数搜索")
+        self.hp_method_combo = QComboBox()
+        self.hp_method_combo.addItem("网格搜索", userData="grid")
+        self.hp_method_combo.addItem("随机搜索", userData="random")
+        self.hp_iter_spin = QSpinBox()
+        self.hp_iter_spin.setRange(1, 100)
+        self.hp_iter_spin.setValue(20)
 
         refresh_button = QPushButton("刷新训练数据")
         refresh_button.clicked.connect(self.refresh_page)
@@ -89,10 +104,16 @@ class MoleculeDesignPage(BasePage):
         controls_form.addWidget(self.model_combo, 1, 1)
         controls_form.addWidget(QLabel("测试集比例"), 2, 0)
         controls_form.addWidget(self.test_size_spin, 2, 1)
-        controls_form.addWidget(refresh_button, 3, 0)
-        controls_form.addWidget(train_button, 3, 1)
-        controls_form.addWidget(save_button, 4, 0)
-        controls_form.addWidget(load_button, 4, 1)
+        controls_form.addWidget(self.cv_checkbox, 3, 0)
+        controls_form.addWidget(self.cv_fold_combo, 3, 1)
+        controls_form.addWidget(self.hp_checkbox, 4, 0)
+        controls_form.addWidget(self.hp_method_combo, 4, 1)
+        controls_form.addWidget(QLabel("搜索迭代数"), 5, 0)
+        controls_form.addWidget(self.hp_iter_spin, 5, 1)
+        controls_form.addWidget(refresh_button, 6, 0)
+        controls_form.addWidget(train_button, 6, 1)
+        controls_form.addWidget(save_button, 7, 0)
+        controls_form.addWidget(load_button, 7, 1)
 
         metrics_box = QGroupBox("训练结果")
         metrics_form = QFormLayout(metrics_box)
@@ -100,12 +121,14 @@ class MoleculeDesignPage(BasePage):
         self.metric_r2_label = QLabel("-")
         self.metric_mae_label = QLabel("-")
         self.metric_rmse_label = QLabel("-")
+        self.metric_extra_label = QLabel("-")
         self.model_info_label = QLabel("-")
         metrics_form.addRow("数据概况", self.dataset_info_label)
         metrics_form.addRow("模型信息", self.model_info_label)
-        metrics_form.addRow("R²", self.metric_r2_label)
-        metrics_form.addRow("MAE", self.metric_mae_label)
-        metrics_form.addRow("RMSE", self.metric_rmse_label)
+        metrics_form.addRow("主指标", self.metric_r2_label)
+        metrics_form.addRow("辅助指标 1", self.metric_mae_label)
+        metrics_form.addRow("辅助指标 2", self.metric_rmse_label)
+        metrics_form.addRow("CV / 搜索", self.metric_extra_label)
 
         self.canvas = MatplotlibCanvas(width=6.4, height=4.6)
 
@@ -158,12 +181,27 @@ class MoleculeDesignPage(BasePage):
         for property_name in property_names:
             self.target_combo.addItem(property_name)
 
+        self._refresh_model_catalog()
+
+    def _refresh_model_catalog(self) -> None:
+        current_key = self.model_combo.currentData()
+        target_name = self.target_combo.currentText()
+        problem_type = None
+        if target_name:
+            try:
+                problem_type = self.model_service.infer_problem_type(target_name)
+            except Exception:
+                problem_type = None
         self.model_combo.clear()
-        for item in self.model_service.get_model_catalog():
+        for item in self.model_service.get_model_catalog(problem_type):
             label = str(item["label"])
             if not item["available"]:
                 label = f"{label} (未安装)"
             self.model_combo.addItem(label, userData=item["key"])
+        if current_key is not None:
+            index = self.model_combo.findData(current_key)
+            if index >= 0:
+                self.model_combo.setCurrentIndex(index)
 
     def _train_model(self) -> None:
         if self.target_combo.count() == 0:
@@ -177,6 +215,11 @@ class MoleculeDesignPage(BasePage):
                 target_name=target_name,
                 model_key=model_key,
                 test_size=float(self.test_size_spin.value()),
+                cv_mode=self.cv_checkbox.isChecked(),
+                n_folds=int(self.cv_fold_combo.currentData()),
+                hp_search=self.hp_checkbox.isChecked(),
+                hp_method=str(self.hp_method_combo.currentData()),
+                hp_n_iter=int(self.hp_iter_spin.value()),
             )
         except Exception as exc:
             QMessageBox.critical(self, "训练失败", str(exc))
@@ -184,18 +227,46 @@ class MoleculeDesignPage(BasePage):
 
         self.current_artifact = artifact
         metrics = artifact["metrics"]
-        self.metric_r2_label.setText(f"{metrics['r2']:.4f}")
-        self.metric_mae_label.setText(f"{metrics['mae']:.4f}")
-        self.metric_rmse_label.setText(f"{metrics['rmse']:.4f}")
+        self._display_metrics(artifact)
         self.model_info_label.setText(
-            f"{artifact['model_name']} | 目标: {artifact['target_name']} | 特征数: {len(artifact['feature_names'])}"
+            f"{artifact['model_name']} | {artifact.get('problem_type', 'regression')} | 目标: {artifact['target_name']} | 特征数: {len(artifact['feature_names'])}"
         )
-        self.visualization_service.plot_prediction_scatter(
-            self.canvas.axes,
-            list(artifact["y_true"]),
-            list(artifact["y_pred"]),
-        )
+        if artifact.get("problem_type") == "classification":
+            self.visualization_service.plot_confusion_matrix(
+                self.canvas.axes,
+                list(metrics["confusion_matrix"]),
+                list(metrics["labels"]),
+            )
+        else:
+            self.visualization_service.plot_prediction_scatter(
+                self.canvas.axes,
+                list(artifact["y_true"]),
+                list(artifact["y_pred"]),
+            )
         self.canvas.draw_idle()
+
+    def _display_metrics(self, artifact: dict[str, object]) -> None:
+        metrics = artifact["metrics"]
+        if not isinstance(metrics, dict):
+            return
+        if artifact.get("problem_type") == "classification":
+            self.metric_r2_label.setText(f"Accuracy: {float(metrics['accuracy']):.4f}")
+            self.metric_mae_label.setText(f"Precision: {float(metrics['precision']):.4f}")
+            self.metric_rmse_label.setText(f"Recall/F1: {float(metrics['recall']):.4f} / {float(metrics['f1']):.4f}")
+        else:
+            self.metric_r2_label.setText(f"R²: {float(metrics['r2']):.4f}")
+            self.metric_mae_label.setText(f"MAE: {float(metrics['mae']):.4f}")
+            self.metric_rmse_label.setText(f"RMSE: {float(metrics['rmse']):.4f}")
+        extras: list[str] = []
+        cv_results = artifact.get("cv_results")
+        if isinstance(cv_results, dict):
+            extras.append(
+                f"{cv_results['scoring']}: {float(cv_results['cv_mean']):.4f} ± {float(cv_results['cv_std']):.4f} ({cv_results['n_folds']}-fold)"
+            )
+        hp_results = artifact.get("hp_results")
+        if isinstance(hp_results, dict) and hp_results.get("best_score") is not None:
+            extras.append(f"Best {hp_results.get('scoring')}: {float(hp_results['best_score']):.4f}")
+        self.metric_extra_label.setText(" | ".join(extras) if extras else "-")
 
     def _save_model(self) -> None:
         if self.current_artifact is None:
@@ -209,7 +280,7 @@ class MoleculeDesignPage(BasePage):
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "保存模型",
-            str(AppConfig.SAVED_MODELS_DIR / default_name),
+            str(AppConfig.model_store_path() / default_name),
             "Model Files (*.joblib)",
         )
         if not file_path:
@@ -221,7 +292,7 @@ class MoleculeDesignPage(BasePage):
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "读取模型",
-            str(AppConfig.SAVED_MODELS_DIR),
+            str(AppConfig.model_store_path()),
             "Model Files (*.joblib)",
         )
         if not file_path:
@@ -238,13 +309,18 @@ class MoleculeDesignPage(BasePage):
         )
         metrics = artifact.get("metrics") or {}
         if metrics:
-            self.metric_r2_label.setText(f"{metrics.get('r2', 0.0):.4f}")
-            self.metric_mae_label.setText(f"{metrics.get('mae', 0.0):.4f}")
-            self.metric_rmse_label.setText(f"{metrics.get('rmse', 0.0):.4f}")
+            self._display_metrics(artifact)
         y_true = list(artifact.get("y_true") or [])
         y_pred = list(artifact.get("y_pred") or [])
         if y_true and y_pred:
-            self.visualization_service.plot_prediction_scatter(self.canvas.axes, y_true, y_pred)
+            if artifact.get("problem_type") == "classification":
+                self.visualization_service.plot_confusion_matrix(
+                    self.canvas.axes,
+                    list(metrics["confusion_matrix"]),
+                    list(metrics["labels"]),
+                )
+            else:
+                self.visualization_service.plot_prediction_scatter(self.canvas.axes, y_true, y_pred)
             self.canvas.draw_idle()
 
     def _predict_single_molecule(self) -> None:
@@ -263,13 +339,24 @@ class MoleculeDesignPage(BasePage):
             QMessageBox.critical(self, "预测失败", str(exc))
             return
 
-        self.prediction_result_label.setText(
-            "\n".join(
-                [
-                    f"目标性能: {self.current_artifact['target_name']}",
-                    f"预测值: {prediction:.4f}",
-                    f"特征覆盖: {len(report['merged_features'])} / {len(self.current_artifact['feature_names'])}",
-                    f"提示: {report['message']}",
-                ]
-            )
-        )
+        if isinstance(prediction, dict):
+            probability_lines = [
+                f"{label}: {probability:.2%}"
+                for label, probability in sorted(prediction["probabilities"].items())
+            ]
+            result_lines = [
+                f"目标性能: {self.current_artifact['target_name']}",
+                f"预测标签: {prediction['label']}",
+                "概率分布:",
+                *probability_lines,
+                f"特征覆盖: {len(report['merged_features'])} / {len(self.current_artifact['feature_names'])}",
+                f"提示: {report['message']}",
+            ]
+        else:
+            result_lines = [
+                f"目标性能: {self.current_artifact['target_name']}",
+                f"预测值: {prediction:.4f}",
+                f"特征覆盖: {len(report['merged_features'])} / {len(self.current_artifact['feature_names'])}",
+                f"提示: {report['message']}",
+            ]
+        self.prediction_result_label.setText("\n".join(result_lines))
