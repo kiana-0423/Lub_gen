@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: chemstudio
-Version: 0.3.0
+Version: 1.1.0
 Summary: ChemStudio desktop application for chemical and material data management.
 Requires-Python: >=3.11
 Requires-Dist: joblib>=1.4

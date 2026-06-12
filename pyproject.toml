@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chemstudio"
-version = "0.3.0"
+version = "1.1.0"
 description = "ChemStudio desktop application for chemical and material data management."
 requires-python = ">=3.11"
 dependencies = [
