@@ -8,6 +8,7 @@ ChemStudio 是一个面向材料/化学数据管理、分子设计、配方设�
 
 - 新增 Mordred 1800+ 分子描述符计算与 CSV 导出能力
 - 新增多阶段特征筛选：方差、缺失值、共线性、互信息、模型驱动筛选
+- 新增可选 SHAP 模型解释：全局特征重要性、摘要图和单样本局部贡献
 - 分子设计与配方设计训练流程异步化，减少 UI 卡顿
 - 数据访问层引入 Repository：`MoleculeRepository`、`DescriptorRepository`、`ModelRepository`、`FormulaRepository`、`PredictionRepository`
 - 增加统一验证层，集中校验 SMILES、分子名称、配方比例、目标列和特征列
@@ -97,6 +98,12 @@ pip install -r requirements.txt
 pip install xgboost
 ```
 
+如果需要 SHAP 模型解释与可视化：
+
+```bash
+pip install -e ".[explain]"
+```
+
 开发环境建议安装开发依赖并启用 pre-commit：
 
 ```bash
@@ -131,6 +138,7 @@ pytest -q
 - SQLite 数据库默认位于 `chemstudio/resources/chemstudio.sqlite`，可通过 `CHEMSTUDIO_DATABASE_PATH` 覆盖
 - 已训练模型默认保存到 `chemstudio/resources/saved_models/`
 - RDKit 和 Mordred 用于分子结构解析与描述符计算
+- SHAP 是可选依赖，用于训练后的全局特征重要性、摘要图和单样本局部解释
 - XGBoost 是兼容式可选依赖，不安装也可以运行主体功能
 - 当前配方特征工程采用简单加权平均策略，代码结构已为后续更复杂规则预留扩展点
 - 日志级别可通过 `CHEMSTUDIO_LOG_LEVEL` 覆盖，例如 `DEBUG`、`INFO`、`WARNING`

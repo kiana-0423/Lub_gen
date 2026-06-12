@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
 from PySide6.QtWidgets import (
     QApplication,
@@ -31,7 +32,7 @@ from chemstudio.database.repositories import MoleculeRepository
 from chemstudio.services.feature_service import FeatureService
 from chemstudio.services.model_service import ModelService
 from chemstudio.services.visualization_service import VisualizationService
-from chemstudio.ui.widgets import BasePage, MatplotlibCanvas
+from chemstudio.ui.widgets import BasePage, MatplotlibCanvas, SHAPForceWidget, SHAPSummaryWidget
 from chemstudio.utils.config import AppConfig
 
 
@@ -60,6 +61,28 @@ class ModelTrainingWorker(QObject):
         self.finished.emit(artifact)
 
 
+class ModelExplanationWorker(QObject):
+    """Run SHAP model explanation outside the GUI thread."""
+
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, model_service: ModelService, artifact: dict[str, Any]) -> None:
+        super().__init__()
+        self.model_service = model_service
+        self.artifact = artifact
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            explanation = self.model_service.explain_model(self.artifact)
+        except (RuntimeError, TypeError, ValueError) as exc:
+            logger.exception("Background molecule model explanation failed")
+            self.failed.emit(str(exc))
+            return
+        self.finished.emit(explanation)
+
+
 class MoleculeDesignPage(BasePage):
     """Regression model training and single-molecule prediction page."""
 
@@ -78,8 +101,11 @@ class MoleculeDesignPage(BasePage):
         self.visualization_service = visualization_service
         self.molecule_repository = molecule_repository or MoleculeRepository(db_manager)
         self.current_artifact: dict[str, object] | None = None
+        self.current_explanation: Any | None = None
         self._training_thread: QThread | None = None
         self._training_worker: ModelTrainingWorker | None = None
+        self._explanation_thread: QThread | None = None
+        self._explanation_worker: ModelExplanationWorker | None = None
         self._build_ui()
         self.refresh_page()
 
@@ -178,6 +204,9 @@ class MoleculeDesignPage(BasePage):
         self.training_progress = QProgressBar()
         self.training_progress.setRange(0, 0)
         self.training_progress.setVisible(False)
+        self.explain_model_button = QPushButton("模型解释")
+        self.explain_model_button.clicked.connect(self._explain_model)
+        self.explain_model_button.setEnabled(False)
         metrics_form.addRow("数据概况", self.dataset_info_label)
         metrics_form.addRow("模型信息", self.model_info_label)
         metrics_form.addRow("主指标", self.metric_r2_label)
@@ -186,12 +215,17 @@ class MoleculeDesignPage(BasePage):
         metrics_form.addRow("CV / 搜索", self.metric_extra_label)
         metrics_form.addRow("特征筛选", self.feature_selection_report_label)
         metrics_form.addRow("训练状态", self.training_progress)
+        metrics_form.addRow("", self.explain_model_button)
 
+        self.shap_summary_widget = SHAPSummaryWidget()
+        self.shap_summary_widget.setVisible(False)
         self.canvas = MatplotlibCanvas(width=6.4, height=4.6)
 
         layout.addWidget(controls_box)
         layout.addWidget(metrics_box)
+        layout.addWidget(self.shap_summary_widget, stretch=1)
         layout.addWidget(self.canvas, stretch=1)
+        self._update_explain_button_state()
         return panel
 
     def _build_prediction_panel(self) -> QWidget:
@@ -216,6 +250,8 @@ class MoleculeDesignPage(BasePage):
 
         self.prediction_result_label = QLabel("尚未预测")
         self.prediction_result_label.setWordWrap(True)
+        self.shap_force_widget = SHAPForceWidget()
+        self.shap_force_widget.setVisible(False)
 
         prediction_layout.addWidget(QLabel("SMILES"))
         prediction_layout.addWidget(self.smiles_input)
@@ -223,6 +259,7 @@ class MoleculeDesignPage(BasePage):
         prediction_layout.addWidget(self.feature_text_edit, stretch=1)
         prediction_layout.addWidget(predict_button)
         prediction_layout.addWidget(self.prediction_result_label)
+        prediction_layout.addWidget(self.shap_force_widget, stretch=1)
 
         layout.addWidget(prediction_box, stretch=1)
         return panel
@@ -309,6 +346,9 @@ class MoleculeDesignPage(BasePage):
     @Slot(dict)
     def _handle_training_finished(self, artifact: dict[str, object]) -> None:
         self.current_artifact = artifact
+        self.current_explanation = None
+        self.shap_summary_widget.setVisible(False)
+        self.shap_force_widget.setVisible(False)
         self._render_training_artifact(artifact)
 
     @Slot(str)
@@ -344,6 +384,7 @@ class MoleculeDesignPage(BasePage):
                 list(artifact["y_pred"]),
             )
         self.canvas.draw_idle()
+        self._update_explain_button_state()
 
     def _display_metrics(self, artifact: dict[str, object]) -> None:
         metrics = artifact["metrics"]
@@ -416,6 +457,68 @@ class MoleculeDesignPage(BasePage):
             self.load_model_button,
         ):
             widget.setEnabled(not busy)
+        self._update_explain_button_state()
+
+    def _update_explain_button_state(self) -> None:
+        if not hasattr(self, "explain_model_button"):
+            return
+        if not self.model_service.is_explainer_available():
+            self.explain_model_button.setEnabled(False)
+            self.explain_model_button.setToolTip("请安装 shap 库以启用模型解释功能")
+            return
+        has_artifact = self.current_artifact is not None
+        can_run = has_artifact and self._training_thread is None and self._explanation_thread is None
+        self.explain_model_button.setEnabled(can_run)
+        self.explain_model_button.setToolTip("计算并展示 SHAP 全局模型解释" if has_artifact else "请先训练或读取模型")
+
+    def _explain_model(self) -> None:
+        if self.current_artifact is None:
+            QMessageBox.information(self, "未加载模型", "请先训练模型或读取已保存模型。")
+            return
+        if not self.model_service.is_explainer_available():
+            QMessageBox.information(self, "缺少 SHAP", "请安装 shap 库以启用模型解释功能。")
+            return
+        if self._explanation_thread is not None:
+            QMessageBox.information(self, "正在解释", "当前已有模型解释任务正在运行。")
+            return
+
+        self.explain_model_button.setText("解释计算中...")
+        self.explain_model_button.setEnabled(False)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+
+        thread = QThread(self)
+        worker = ModelExplanationWorker(self.model_service, dict(self.current_artifact))
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._handle_explanation_finished)
+        worker.failed.connect(self._handle_explanation_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        worker.failed.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._handle_explanation_thread_finished)
+        self._explanation_thread = thread
+        self._explanation_worker = worker
+        thread.start()
+
+    @Slot(object)
+    def _handle_explanation_finished(self, explanation: object) -> None:
+        self.current_explanation = explanation
+        self.shap_summary_widget.load_explanation(explanation)  # type: ignore[arg-type]
+        self.shap_summary_widget.setVisible(True)
+
+    @Slot(str)
+    def _handle_explanation_failed(self, message: str) -> None:
+        QMessageBox.warning(self, "模型解释失败", message)
+
+    @Slot()
+    def _handle_explanation_thread_finished(self) -> None:
+        self._explanation_thread = None
+        self._explanation_worker = None
+        self.explain_model_button.setText("模型解释")
+        self._update_explain_button_state()
+        QApplication.restoreOverrideCursor()
 
     def _save_model(self) -> None:
         if self.current_artifact is None:
@@ -463,6 +566,9 @@ class MoleculeDesignPage(BasePage):
             return
 
         self.current_artifact = artifact
+        self.current_explanation = None
+        self.shap_summary_widget.setVisible(False)
+        self.shap_force_widget.setVisible(False)
         self.model_info_label.setText(
             f"{artifact['model_name']} | 目标: {artifact['target_name']} | 特征数: {len(artifact['feature_names'])}"
         )
@@ -482,6 +588,7 @@ class MoleculeDesignPage(BasePage):
             else:
                 self.visualization_service.plot_prediction_scatter(self.canvas.axes, y_true, y_pred)
             self.canvas.draw_idle()
+        self._update_explain_button_state()
 
     def _predict_single_molecule(self) -> None:
         if self.current_artifact is None:
@@ -521,3 +628,29 @@ class MoleculeDesignPage(BasePage):
                 f"提示: {report['message']}",
             ]
         self.prediction_result_label.setText("\n".join(result_lines))
+        self._render_single_prediction_explanation(feature_values)
+
+    def _render_single_prediction_explanation(self, feature_values: dict[str, float]) -> None:
+        if self.current_artifact is None or self.current_explanation is None:
+            self.shap_force_widget.setVisible(False)
+            return
+        try:
+            feature_frame = pd.DataFrame(
+                [
+                    {
+                        str(feature): float(feature_values.get(str(feature), 0.0))
+                        for feature in list(self.current_artifact["feature_names"])
+                    }
+                ]
+            )
+            payload = self.model_service.explain_single_prediction(
+                self.current_artifact,
+                self.current_explanation,
+                feature_frame,
+            )
+        except (RuntimeError, TypeError, ValueError) as exc:
+            logger.warning("Failed to render local SHAP explanation: %s", exc)
+            self.shap_force_widget.setVisible(False)
+            return
+        self.shap_force_widget.load_force_plot(str(payload["html"]))
+        self.shap_force_widget.setVisible(True)

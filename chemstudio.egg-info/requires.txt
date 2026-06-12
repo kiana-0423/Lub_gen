@@ -12,6 +12,9 @@ scikit-learn>=1.5
 [boost]
 xgboost>=2.1
 
+[explain]
+shap>=0.44
+
 [dev]
 pre-commit>=3.0
 pytest>=8.0

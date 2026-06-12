@@ -15,6 +15,8 @@ Requires-Dist: scikit-learn>=1.5
 Requires-Dist: mordred>=1.2.0
 Provides-Extra: boost
 Requires-Dist: xgboost>=2.1; extra == "boost"
+Provides-Extra: explain
+Requires-Dist: shap>=0.44; extra == "explain"
 Provides-Extra: dev
 Requires-Dist: pre-commit>=3.0; extra == "dev"
 Requires-Dist: pytest>=8.0; extra == "dev"

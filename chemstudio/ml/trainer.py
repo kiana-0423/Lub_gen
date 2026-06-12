@@ -98,6 +98,8 @@ def train_regression_model(
         "metrics": metrics,
         "sample_count": int(len(training_frame)),
         "test_size": float(test_size),
+        "x_train_sample": x_train.head(200).to_dict(orient="list"),
+        "x_test_sample": x_test.head(200).to_dict(orient="list"),
         "y_true": y_true_array.tolist(),
         "y_pred": y_pred_array.tolist(),
         "cv_results": cv_results,

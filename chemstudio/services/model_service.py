@@ -10,6 +10,7 @@ import pandas as pd
 from chemstudio.database.db_manager import DatabaseManager
 from chemstudio.database.repositories import DescriptorRepository, ModelRepository
 from chemstudio.ml.classifier import train_classification_model
+from chemstudio.ml import explainer as shap_explainer
 from chemstudio.ml.feature_selection import FeatureSelectionStrategy
 from chemstudio.ml.predictor import predict_classification_value, predict_regression_value
 from chemstudio.ml.trainer import get_model_catalog, train_regression_model
@@ -48,6 +49,10 @@ class ModelService:
     def get_model_catalog(self, problem_type: str | None = None) -> list[dict[str, Any]]:
         """Return model options for the UI."""
         return get_model_catalog(problem_type)
+
+    def is_explainer_available(self) -> bool:
+        """Return whether SHAP explainability is available in this environment."""
+        return shap_explainer.is_shap_available()
 
     def infer_problem_type(self, target_name: str) -> str:
         """Infer classification when the target has <= 10 integer-valued classes."""
@@ -106,6 +111,38 @@ class ModelService:
         )
         artifact["feature_selection_report"] = feature_selection_report
         return artifact
+
+    def explain_model(
+        self,
+        artifact: dict[str, Any],
+        x_test: pd.DataFrame | None = None,
+    ) -> shap_explainer.SHAPExplanation:
+        """Create a SHAP global explanation for a trained model artifact."""
+        feature_names = [str(feature) for feature in artifact["feature_names"]]
+        x_train_sample = artifact.get("x_train_sample")
+        if isinstance(x_train_sample, dict):
+            x_train = pd.DataFrame(x_train_sample)
+        else:
+            dataset = self.get_training_dataset()
+            x_train = dataset[feature_names].copy()
+
+        if x_test is None:
+            x_test_sample = artifact.get("x_test_sample")
+            if isinstance(x_test_sample, dict):
+                x_test = pd.DataFrame(x_test_sample)
+            else:
+                x_test = x_train.head(200).copy()
+
+        return shap_explainer.explain_model(artifact, x_train=x_train, x_test=x_test)
+
+    def explain_single_prediction(
+        self,
+        artifact: dict[str, Any],
+        explanation: shap_explainer.SHAPExplanation,
+        feature_values: pd.DataFrame,
+    ) -> dict[str, Any]:
+        """Create a local SHAP explanation for one prediction input."""
+        return shap_explainer.explain_single_prediction(artifact, explanation, feature_values)
 
     def save_model(self, artifact: dict[str, Any], file_path: str | Path) -> None:
         """Persist a trained model artifact."""

@@ -94,6 +94,8 @@ def train_classification_model(
         "sample_count": int(len(training_frame)),
         "test_size": float(test_size),
         "classes": [int(label) for label in getattr(pipeline, "classes_", metrics["labels"])],
+        "x_train_sample": x_train.head(200).to_dict(orient="list"),
+        "x_test_sample": x_test.head(200).to_dict(orient="list"),
         "y_true": y_true_array.astype(int).tolist(),
         "y_pred": y_pred_array.astype(int).tolist(),
         "cv_results": cv_results,

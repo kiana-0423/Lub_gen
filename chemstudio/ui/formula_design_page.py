@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import pandas as pd
 from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
 from PySide6.QtWidgets import (
     QApplication,
@@ -29,7 +30,7 @@ from chemstudio.database.db_manager import DatabaseManager
 from chemstudio.database.repositories import MoleculeRepository
 from chemstudio.services.formula_service import FormulaService
 from chemstudio.services.model_service import ModelService
-from chemstudio.ui.widgets import BasePage
+from chemstudio.ui.widgets import BasePage, SHAPForceWidget, SHAPSummaryWidget
 
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,28 @@ class FormulaTrainingWorker(QObject):
         self.finished.emit(artifact)
 
 
+class FormulaExplanationWorker(QObject):
+    """Run formulation SHAP model explanation outside the GUI thread."""
+
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, model_service: ModelService, artifact: dict[str, Any]) -> None:
+        super().__init__()
+        self.model_service = model_service
+        self.artifact = artifact
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            explanation = self.model_service.explain_model(self.artifact)
+        except (RuntimeError, TypeError, ValueError) as exc:
+            logger.exception("Background formulation model explanation failed")
+            self.failed.emit(str(exc))
+            return
+        self.finished.emit(explanation)
+
+
 class FormulaDesignPage(BasePage):
     """Formula-design module with an entry page, formulation learning, and ML prediction."""
 
@@ -73,9 +96,12 @@ class FormulaDesignPage(BasePage):
         self.formula_service = formula_service
         self.model_service = model_service
         self.current_artifact: dict[str, Any] | None = None
+        self.current_explanation: Any | None = None
         self.molecule_catalog: list[dict[str, Any]] = []
         self._training_thread: QThread | None = None
         self._training_worker: FormulaTrainingWorker | None = None
+        self._explanation_thread: QThread | None = None
+        self._explanation_worker: FormulaExplanationWorker | None = None
         self._build_ui()
         self.refresh_page()
 
@@ -302,16 +328,25 @@ class FormulaDesignPage(BasePage):
         self.training_progress = QProgressBar()
         self.training_progress.setRange(0, 0)
         self.training_progress.setVisible(False)
+        self.formula_explain_button = QPushButton("模型解释")
+        self.formula_explain_button.clicked.connect(self._explain_model)
+        self.formula_explain_button.setEnabled(False)
         metrics_layout.addRow("数据概况", self.training_summary_label)
         metrics_layout.addRow("模型信息", self.training_model_info_label)
         metrics_layout.addRow("R²", self.training_r2_label)
         metrics_layout.addRow("MAE", self.training_mae_label)
         metrics_layout.addRow("RMSE", self.training_rmse_label)
         metrics_layout.addRow("训练状态", self.training_progress)
+        metrics_layout.addRow("", self.formula_explain_button)
+
+        self.formula_shap_summary_widget = SHAPSummaryWidget()
+        self.formula_shap_summary_widget.setVisible(False)
 
         layout.addWidget(setup_box)
         layout.addWidget(metrics_box)
+        layout.addWidget(self.formula_shap_summary_widget, stretch=1)
         layout.addStretch(1)
+        self._update_explain_button_state()
         return panel
 
     def _build_prediction_panel(self) -> QWidget:
@@ -357,6 +392,8 @@ class FormulaDesignPage(BasePage):
         )
         self.prediction_result_text = QTextEdit()
         self.prediction_result_text.setReadOnly(True)
+        self.formula_shap_force_widget = SHAPForceWidget()
+        self.formula_shap_force_widget.setVisible(False)
 
         predictor_layout.addLayout(actions)
         predictor_layout.addWidget(self.prediction_component_table, stretch=1)
@@ -364,6 +401,7 @@ class FormulaDesignPage(BasePage):
         predictor_layout.addWidget(QLabel("测试条件"))
         predictor_layout.addWidget(self.prediction_test_conditions_input)
         predictor_layout.addWidget(self.prediction_result_text, stretch=1)
+        predictor_layout.addWidget(self.formula_shap_force_widget, stretch=1)
 
         layout.addWidget(predictor_box, stretch=1)
         return panel
@@ -787,6 +825,9 @@ class FormulaDesignPage(BasePage):
     @Slot(dict)
     def _handle_training_finished(self, artifact: dict[str, Any]) -> None:
         self.current_artifact = artifact
+        self.current_explanation = None
+        self.formula_shap_summary_widget.setVisible(False)
+        self.formula_shap_force_widget.setVisible(False)
         self._render_training_artifact(artifact)
 
     @Slot(str)
@@ -811,6 +852,7 @@ class FormulaDesignPage(BasePage):
         self.training_r2_label.setText(f"{metrics['r2']:.4f}")
         self.training_mae_label.setText(f"{metrics['mae']:.4f}")
         self.training_rmse_label.setText(f"{metrics['rmse']:.4f}")
+        self._update_explain_button_state()
 
     def _set_training_busy(self, busy: bool) -> None:
         self.training_progress.setVisible(busy)
@@ -820,6 +862,68 @@ class FormulaDesignPage(BasePage):
             self.training_train_button,
         ):
             widget.setEnabled(not busy)
+        self._update_explain_button_state()
+
+    def _update_explain_button_state(self) -> None:
+        if not hasattr(self, "formula_explain_button"):
+            return
+        if not self.model_service.is_explainer_available():
+            self.formula_explain_button.setEnabled(False)
+            self.formula_explain_button.setToolTip("请安装 shap 库以启用模型解释功能")
+            return
+        has_artifact = self.current_artifact is not None
+        can_run = has_artifact and self._training_thread is None and self._explanation_thread is None
+        self.formula_explain_button.setEnabled(can_run)
+        self.formula_explain_button.setToolTip("计算并展示 SHAP 全局模型解释" if has_artifact else "请先训练模型")
+
+    def _explain_model(self) -> None:
+        if self.current_artifact is None:
+            QMessageBox.information(self, "未训练模型", "请先完成一次模型训练。")
+            return
+        if not self.model_service.is_explainer_available():
+            QMessageBox.information(self, "缺少 SHAP", "请安装 shap 库以启用模型解释功能。")
+            return
+        if self._explanation_thread is not None:
+            QMessageBox.information(self, "正在解释", "当前已有模型解释任务正在运行。")
+            return
+
+        self.formula_explain_button.setText("解释计算中...")
+        self.formula_explain_button.setEnabled(False)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+
+        thread = QThread(self)
+        worker = FormulaExplanationWorker(self.model_service, dict(self.current_artifact))
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._handle_explanation_finished)
+        worker.failed.connect(self._handle_explanation_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        worker.failed.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._handle_explanation_thread_finished)
+        self._explanation_thread = thread
+        self._explanation_worker = worker
+        thread.start()
+
+    @Slot(object)
+    def _handle_explanation_finished(self, explanation: object) -> None:
+        self.current_explanation = explanation
+        self.formula_shap_summary_widget.load_explanation(explanation)  # type: ignore[arg-type]
+        self.formula_shap_summary_widget.setVisible(True)
+
+    @Slot(str)
+    def _handle_explanation_failed(self, message: str) -> None:
+        QMessageBox.warning(self, "模型解释失败", message)
+
+    @Slot()
+    def _handle_explanation_thread_finished(self) -> None:
+        self._explanation_thread = None
+        self._explanation_worker = None
+        self.formula_explain_button.setText("模型解释")
+        self._update_explain_button_state()
+        QApplication.restoreOverrideCursor()
 
     def _predict_new_formulation(self) -> None:
         if self.current_artifact is None:
@@ -868,3 +972,29 @@ class FormulaDesignPage(BasePage):
             lines.append(f"- {feature_name} = {float(feature_value):.4f}")
 
         self.prediction_result_text.setPlainText("\n".join(lines))
+        self._render_single_prediction_explanation(prediction["features"])
+
+    def _render_single_prediction_explanation(self, feature_values: dict[str, float]) -> None:
+        if self.current_artifact is None or self.current_explanation is None:
+            self.formula_shap_force_widget.setVisible(False)
+            return
+        try:
+            feature_frame = pd.DataFrame(
+                [
+                    {
+                        str(feature): float(feature_values.get(str(feature), 0.0))
+                        for feature in list(self.current_artifact["feature_names"])
+                    }
+                ]
+            )
+            payload = self.model_service.explain_single_prediction(
+                self.current_artifact,
+                self.current_explanation,
+                feature_frame,
+            )
+        except (RuntimeError, TypeError, ValueError) as exc:
+            logger.warning("Failed to render formulation local SHAP explanation: %s", exc)
+            self.formula_shap_force_widget.setVisible(False)
+            return
+        self.formula_shap_force_widget.load_force_plot(str(payload["html"]))
+        self.formula_shap_force_widget.setVisible(True)
