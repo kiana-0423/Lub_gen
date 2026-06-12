@@ -41,7 +41,18 @@ class FakeMoleculeRepository:
 
 
 class FakeImportService:
-    pass
+    def __init__(self) -> None:
+        self.requested_descriptor_ids: list[int] = []
+
+    def compute_missing_descriptors(self, molecule_ids: list[int]) -> dict[str, int]:
+        self.requested_descriptor_ids = molecule_ids
+        return {
+            "selected_count": len(molecule_ids),
+            "target_count": len(molecule_ids),
+            "computed_count": len(molecule_ids),
+            "skipped_count": 0,
+            "failed_count": 0,
+        }
 
 
 class FakeVisualizationService:
@@ -64,8 +75,10 @@ def make_page(monkeypatch, dataframe: pd.DataFrame | None = None, descriptor_cou
     monkeypatch.setattr(data_page_module, "QWebEngineView", None)
     db_manager = FakeDatabaseManager()
     molecule_repository = FakeMoleculeRepository(dataframe=dataframe, descriptor_count=descriptor_count)
-    page = DataPage(db_manager, FakeImportService(), FakeVisualizationService(), molecule_repository)
+    import_service = FakeImportService()
+    page = DataPage(db_manager, import_service, FakeVisualizationService(), molecule_repository)
     page._fake_molecule_repository = molecule_repository
+    page._fake_import_service = import_service
     return page
 
 
@@ -128,6 +141,29 @@ def test_export_csv_shows_warning_when_no_descriptors(monkeypatch, qt_app, tmp_p
 
     assert messages == [("没有可导出的特征", "当前没有可导出的特征数据，请先导入分子并计算描述符。")]
     assert not (tmp_path / "features.csv").exists()
+
+
+def test_compute_descriptors_uses_current_rows(monkeypatch, qt_app):
+    del qt_app
+    monkeypatch.setattr(data_page_module, "is_mordred_available", lambda: True)
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        data_page_module.QMessageBox,
+        "information",
+        lambda parent, title, message: messages.append((title, message)),
+    )
+    dataframe = pd.DataFrame(
+        [
+            {"id": 2, "name": "ethanol", "smiles": "CCO"},
+            {"id": 5, "name": "acetone", "smiles": "CC(C)=O"},
+        ]
+    )
+    page = make_page(monkeypatch, dataframe=dataframe, descriptor_count=0)
+
+    page._compute_descriptors_for_current_rows()
+
+    assert page._fake_import_service.requested_descriptor_ids == [2, 5]
+    assert messages[-1][0] == "描述符计算完成"
 
 
 def test_default_export_path_uses_desktop_and_date(monkeypatch, qt_app, tmp_path):

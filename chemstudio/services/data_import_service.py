@@ -49,8 +49,107 @@ class DataImportService:
         "source",
     }
     NAME_COLUMNS = {"name", "molecule_name", "material_name", "compound_name"}
-    SMILES_COLUMNS = {"smiles", "structure", "structure_id", "canonical_smiles"}
+    SMILES_COLUMNS = {"smiles", "structure_id", "canonical_smiles"}
     SOURCE_COLUMNS = {"source", "dataset", "origin"}
+    SAMPLE_ID_COLUMNS = {"sample_id", "id"}
+    AUXILIARY_COLUMNS = {
+        "sample_id",
+        "molecule_name",
+        "molecular_formula",
+        "structure",
+    }
+    NUMERIC_FEATURE_COLUMNS = {
+        "additive_concentration",
+        "upper_diameter",
+        "probe_diameter",
+        "lower_length",
+        "lower_width",
+        "lower_thickness",
+        "load",
+        "stroke",
+        "frequency",
+        "duration",
+        "speed",
+        "temperature",
+    }
+    CATEGORICAL_FEATURE_COLUMNS = {
+        "base_oil",
+        "experiment_name",
+        "test_mode",
+        "upper_material",
+        "upper_type",
+        "lower_material",
+        "lower_type",
+    }
+    TARGET_COLUMNS = {
+        "oxidation_onset_temperature",
+        "extreme_pressure_load",
+        "average_friction_coefficient",
+        "wear_scar_width",
+        "wear_scar_depth",
+        "wear_spot_diameter",
+    }
+    COLUMN_ALIASES = {
+        "编号": "sample_id",
+        "样本编号": "sample_id",
+        "sample_id": "sample_id",
+        "id": "sample_id",
+        "smiles": "smiles",
+        "分子名称": "molecule_name",
+        "molecule_name": "molecule_name",
+        "name": "molecule_name",
+        "分子结构式": "molecular_formula",
+        "molecular_formula": "molecular_formula",
+        "structure": "structure",
+        "所采用的基础油": "base_oil",
+        "base_oil": "base_oil",
+        "添加浓度": "additive_concentration",
+        "additive_concentration": "additive_concentration",
+        "experiment_name": "experiment_name",
+        "test_mode": "test_mode",
+        "upper_material": "upper_material",
+        "upper_type": "upper_type",
+        "upper_diameter_value": "upper_diameter",
+        "upper_diameter": "upper_diameter",
+        "lower_material": "lower_material",
+        "lower_type": "lower_type",
+        "probe_diameter": "probe_diameter",
+        "lower_length_value": "lower_length",
+        "lower_length": "lower_length",
+        "lower_width_value": "lower_width",
+        "lower_width": "lower_width",
+        "lower_thickness_value": "lower_thickness",
+        "lower_thickness": "lower_thickness",
+        "load_value": "load",
+        "load": "load",
+        "stroke_value": "stroke",
+        "stroke": "stroke",
+        "frequency_value": "frequency",
+        "frequency": "frequency",
+        "duration_value": "duration",
+        "duration": "duration",
+        "speed": "speed",
+        "temp": "temperature",
+        "temperature": "temperature",
+        "初始氧化温度/℃（pdsc）": "oxidation_onset_temperature",
+        "初始氧化温度/℃(pdsc)": "oxidation_onset_temperature",
+        "初始氧化温度": "oxidation_onset_temperature",
+        "oxidation_onset_temperature": "oxidation_onset_temperature",
+        "极压性/n(1450r/min 10s 25℃)": "extreme_pressure_load",
+        "极压性": "extreme_pressure_load",
+        "extreme_pressure_load": "extreme_pressure_load",
+        "平均摩擦系数": "average_friction_coefficient",
+        "average_friction_coefficient": "average_friction_coefficient",
+        "磨痕宽度/mm": "wear_scar_width",
+        "磨痕宽度": "wear_scar_width",
+        "wear_scar_width": "wear_scar_width",
+        "磨痕深度/μm": "wear_scar_depth",
+        "磨痕深度/um": "wear_scar_depth",
+        "磨痕深度": "wear_scar_depth",
+        "wear_scar_depth": "wear_scar_depth",
+        "磨斑直径": "wear_spot_diameter",
+        "wear_spot_diameter": "wear_spot_diameter",
+    }
     PROPERTY_KEYWORDS = {
         "property",
         "performance",
@@ -63,6 +162,10 @@ class DataImportService:
         "strength",
         "modulus",
         "retention",
+        "oxidation",
+        "pressure",
+        "friction",
+        "wear",
     }
 
     def __init__(self, db_manager: DatabaseManager) -> None:
@@ -93,6 +196,47 @@ class DataImportService:
             "row_count": len(molecule_records),
             "inserted_ids": inserted_ids,
             "columns": sorted({key for record in records for key in record.keys()}),
+        }
+
+    def compute_missing_descriptors(self, molecule_ids: Sequence[int] | None = None) -> dict[str, int]:
+        """Compute Mordred descriptors for stored molecules that do not have descriptor payloads yet."""
+        allowed_ids = {int(molecule_id) for molecule_id in molecule_ids} if molecule_ids is not None else None
+        molecule_rows = self.db_manager.list_molecules(
+            include_hidden=True,
+            sort_by="id",
+            descending=False,
+        )
+        selected_rows = [
+            row
+            for row in molecule_rows
+            if allowed_ids is None or int(row["id"]) in allowed_ids
+        ]
+        completed_ids = self._list_completed_descriptor_ids()
+        targets = [
+            row
+            for row in selected_rows
+            if int(row["id"]) not in completed_ids
+            and str(row.get("canonical_smiles") or row.get("smiles") or "").strip()
+        ]
+
+        descriptor_results = self._compute_descriptors_batch(
+            [str(row.get("canonical_smiles") or row.get("smiles") or "").strip() for row in targets]
+        )
+        computed_count = 0
+        failed_count = 0
+        for row, descriptors in zip(targets, descriptor_results, strict=True):
+            if descriptors:
+                self.db_manager.save_descriptors(int(row["id"]), descriptors)
+                computed_count += 1
+            else:
+                failed_count += 1
+
+        return {
+            "selected_count": len(selected_rows),
+            "target_count": len(targets),
+            "computed_count": computed_count,
+            "skipped_count": len(selected_rows) - len(targets),
+            "failed_count": failed_count,
         }
 
     def load_records(self, file_path: str | Path) -> list[dict[str, object]]:
@@ -127,15 +271,40 @@ class DataImportService:
             return []
 
         mapped_columns = {column: normalize_field_name(column) for column in dataframe.columns}
+        canonical_columns = {
+            column: self._canonical_import_column(column, normalized_name)
+            for column, normalized_name in mapped_columns.items()
+        }
         feature_columns: list[str] = []
         property_columns: list[str] = []
-        parameter_columns: list[str] = []
+        categorical_feature_columns: list[str] = []
+        parameter_columns: dict[str, str] = {}
+        code_columns: list[str] = []
 
         for original_name, normalized_name in mapped_columns.items():
-            if normalized_name in self.NAME_COLUMNS | self.SMILES_COLUMNS | self.SOURCE_COLUMNS:
+            canonical_name = canonical_columns[original_name]
+            if canonical_name in self.SAMPLE_ID_COLUMNS:
+                code_columns.append(original_name)
+                parameter_columns[original_name] = "sample_id"
+                continue
+            if canonical_name in self.AUXILIARY_COLUMNS:
+                parameter_columns[original_name] = canonical_name
+                continue
+            if canonical_name in self.NAME_COLUMNS | self.SMILES_COLUMNS | self.SOURCE_COLUMNS:
                 continue
             if parameter_mode and str(original_name).startswith("parameter:"):
-                parameter_columns.append(original_name)
+                parameter_columns[original_name] = str(original_name).split("parameter:", 1)[1]
+                continue
+
+            if canonical_name in self.CATEGORICAL_FEATURE_COLUMNS:
+                categorical_feature_columns.append(original_name)
+                parameter_columns[original_name] = canonical_name
+                continue
+            if canonical_name in self.NUMERIC_FEATURE_COLUMNS:
+                feature_columns.append(original_name)
+                continue
+            if canonical_name in self.TARGET_COLUMNS:
+                property_columns.append(original_name)
                 continue
 
             if normalized_name.startswith(("feature_", "feat_", "descriptor_")):
@@ -154,13 +323,16 @@ class DataImportService:
             else:
                 feature_columns.append(original_name)
 
+        category_values = self._build_category_values(dataframe, categorical_feature_columns, canonical_columns)
         pending_records: list[dict[str, object]] = []
         for row_index, (_, row) in enumerate(dataframe.iterrows(), start=1):
-            name = self._extract_text(row, mapped_columns, self.NAME_COLUMNS) or f"molecule_{row_index}"
-            smiles = self._extract_text(row, mapped_columns, self.SMILES_COLUMNS)
-            source = self._extract_text(row, mapped_columns, self.SOURCE_COLUMNS) or source_label
+            name = self._extract_text(row, canonical_columns, self.NAME_COLUMNS) or f"molecule_{row_index}"
+            smiles = self._extract_text(row, canonical_columns, self.SMILES_COLUMNS)
+            source = self._extract_text(row, canonical_columns, self.SOURCE_COLUMNS) or source_label
+            code = self._extract_text(row, canonical_columns, self.SAMPLE_ID_COLUMNS)
 
             features = self._collect_numeric_values(row, feature_columns)
+            features.update(self._collect_categorical_features(row, categorical_feature_columns, canonical_columns, category_values))
             properties = self._collect_numeric_values(row, property_columns)
             parameters = self._collect_parameter_values(row, parameter_columns)
 
@@ -170,6 +342,7 @@ class DataImportService:
                 {
                     "name": name,
                     "smiles": smiles,
+                    "code": code,
                     "source": source,
                     "parameters": parameters,
                 }
@@ -284,22 +457,70 @@ class DataImportService:
             value = pd.to_numeric(row.get(column), errors="coerce")
             if pd.isna(value):
                 continue
-            normalized_name = normalize_field_name(column)
+            normalized_name = self._canonical_import_column(column, normalize_field_name(column))
             for prefix in ("feature_", "feat_", "descriptor_", "property_", "prop_", "target_", "label_"):
                 if normalized_name.startswith(prefix):
                     normalized_name = normalized_name.removeprefix(prefix)
             values[normalized_name] = float(value)
         return values
 
-    def _collect_parameter_values(self, row: pd.Series, columns: list[str]) -> dict[str, object]:
-        values: dict[str, object] = {}
+    def _collect_categorical_features(
+        self,
+        row: pd.Series,
+        columns: list[str],
+        canonical_columns: dict[str, str],
+        category_values: dict[str, list[str]],
+    ) -> dict[str, float]:
+        values: dict[str, float] = {}
         for column in columns:
+            canonical_name = canonical_columns[column]
+            category_key = self._category_key(row.get(column))
+            if not category_key:
+                continue
+            for known_value in category_values.get(canonical_name, []):
+                values[f"{canonical_name}__{known_value}"] = 1.0 if known_value == category_key else 0.0
+        return values
+
+    def _collect_parameter_values(self, row: pd.Series, columns: dict[str, str]) -> dict[str, object]:
+        values: dict[str, object] = {}
+        for column, parameter_key in columns.items():
             value = self._normalize_cell(row.get(column))
             if value in (None, ""):
                 continue
-            parameter_key = str(column).split("parameter:", 1)[1]
             values[parameter_key] = value
         return values
+
+    def _build_category_values(
+        self,
+        dataframe: pd.DataFrame,
+        columns: list[str],
+        canonical_columns: dict[str, str],
+    ) -> dict[str, list[str]]:
+        category_values: dict[str, set[str]] = {}
+        for column in columns:
+            canonical_name = canonical_columns[column]
+            values = category_values.setdefault(canonical_name, set())
+            for value in dataframe[column].tolist():
+                category_key = self._category_key(value)
+                if category_key:
+                    values.add(category_key)
+        return {key: sorted(values) for key, values in category_values.items()}
+
+    def _canonical_import_column(self, original_name: object, normalized_name: str) -> str:
+        original_key = str(original_name).strip()
+        lowered_key = original_key.lower()
+        if lowered_key in self.COLUMN_ALIASES:
+            return self.COLUMN_ALIASES[lowered_key]
+        if original_key in self.COLUMN_ALIASES:
+            return self.COLUMN_ALIASES[original_key]
+        return self.COLUMN_ALIASES.get(normalized_name, normalized_name)
+
+    def _category_key(self, value: object) -> str:
+        normalized = self._normalize_cell(value)
+        if normalized in (None, ""):
+            return ""
+        key = normalize_field_name(normalized)
+        return key or str(normalized).strip().lower().replace(" ", "_")
 
     def _load_json(self, path: Path) -> list[Mapping[str, object]]:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -396,6 +617,22 @@ class DataImportService:
     def _compute_descriptors_parallel(self, smiles_list: list[str]) -> list[dict[str, float]]:
         """Backward-compatible wrapper for the batch Mordred descriptor path."""
         return self._compute_descriptors_batch(smiles_list)
+
+    def _list_completed_descriptor_ids(self) -> set[int]:
+        """Return molecule ids whose descriptor JSON has at least one value."""
+        with self.db_manager.connect() as connection:
+            rows = connection.execute(
+                "SELECT molecule_id, descriptor_values_json FROM molecule_descriptors"
+            ).fetchall()
+        completed_ids: set[int] = set()
+        for row in rows:
+            try:
+                payload = json.loads(str(row["descriptor_values_json"] or "{}"))
+            except json.JSONDecodeError:
+                payload = {}
+            if isinstance(payload, dict) and payload:
+                completed_ids.add(int(row["molecule_id"]))
+        return completed_ids
 
     def _parse_parameters(self, raw_value: object, *, row_index: int) -> dict[str, object]:
         if raw_value in (None, ""):

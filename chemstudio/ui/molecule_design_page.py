@@ -23,6 +23,8 @@ from PySide6.QtWidgets import (
     QComboBox,
     QLineEdit,
     QSpinBox,
+    QSizePolicy,
+    QSplitter,
     QVBoxLayout,
     QWidget,
 )
@@ -115,19 +117,29 @@ class MoleculeDesignPage(BasePage):
             "从数据库加载训练数据，训练回归模型，并对单个分子输入进行性能预测。",
         )
 
-        content_layout = QHBoxLayout()
-        content_layout.addWidget(self._build_training_panel(), stretch=3)
-        content_layout.addWidget(self._build_prediction_panel(), stretch=2)
-        root_layout.addLayout(content_layout, stretch=1)
+        workspace = QSplitter(Qt.Orientation.Horizontal)
+        workspace.setObjectName("moleculeWorkspace")
+        workspace.addWidget(self._build_training_controls_panel())
+        workspace.addWidget(self._build_training_results_panel())
+        workspace.addWidget(self._build_prediction_panel())
+        workspace.setChildrenCollapsible(False)
+        workspace.setSizes([320, 860, 300])
+        root_layout.addWidget(workspace, stretch=1)
 
-    def _build_training_panel(self) -> QWidget:
+    def _build_training_controls_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
+        panel.setMinimumWidth(300)
+        panel.setMaximumWidth(420)
 
         controls_box = QGroupBox("模型训练")
-        controls_form = QGridLayout(controls_box)
+        controls_form = QFormLayout(controls_box)
+        controls_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        controls_form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
+        controls_form.setFormAlignment(Qt.AlignmentFlag.AlignTop)
+        controls_form.setVerticalSpacing(10)
 
         self.target_combo = QComboBox()
         self.target_combo.currentIndexChanged.connect(self._refresh_model_catalog)
@@ -170,61 +182,117 @@ class MoleculeDesignPage(BasePage):
         self.load_model_button = QPushButton("读取模型")
         self.load_model_button.clicked.connect(self._load_model)
 
-        controls_form.addWidget(QLabel("目标性能"), 0, 0)
-        controls_form.addWidget(self.target_combo, 0, 1)
-        controls_form.addWidget(QLabel("模型"), 1, 0)
-        controls_form.addWidget(self.model_combo, 1, 1)
-        controls_form.addWidget(QLabel("测试集比例"), 2, 0)
-        controls_form.addWidget(self.test_size_spin, 2, 1)
-        controls_form.addWidget(self.cv_checkbox, 3, 0)
-        controls_form.addWidget(self.cv_fold_combo, 3, 1)
-        controls_form.addWidget(self.hp_checkbox, 4, 0)
-        controls_form.addWidget(self.hp_method_combo, 4, 1)
-        controls_form.addWidget(QLabel("搜索迭代数"), 5, 0)
-        controls_form.addWidget(self.hp_iter_spin, 5, 1)
-        controls_form.addWidget(QLabel("特征筛选策略"), 6, 0)
-        controls_form.addWidget(self.feature_selection_combo, 6, 1)
-        controls_form.addWidget(QLabel("最大特征数"), 7, 0)
-        controls_form.addWidget(self.max_features_spin, 7, 1)
-        controls_form.addWidget(self.refresh_training_button, 8, 0)
-        controls_form.addWidget(self.train_button, 8, 1)
-        controls_form.addWidget(self.save_model_button, 9, 0)
-        controls_form.addWidget(self.load_model_button, 9, 1)
+        action_grid = QGridLayout()
+        action_grid.setHorizontalSpacing(8)
+        action_grid.setVerticalSpacing(8)
+        action_grid.addWidget(self.refresh_training_button, 0, 0)
+        action_grid.addWidget(self.train_button, 0, 1)
+        action_grid.addWidget(self.save_model_button, 1, 0)
+        action_grid.addWidget(self.load_model_button, 1, 1)
+
+        controls_form.addRow("目标性能", self.target_combo)
+        controls_form.addRow("模型", self.model_combo)
+        controls_form.addRow("测试集比例", self.test_size_spin)
+        controls_form.addRow(self.cv_checkbox, self.cv_fold_combo)
+        controls_form.addRow(self.hp_checkbox, self.hp_method_combo)
+        controls_form.addRow("搜索迭代数", self.hp_iter_spin)
+        controls_form.addRow("特征筛选策略", self.feature_selection_combo)
+        controls_form.addRow("最大特征数", self.max_features_spin)
+        controls_form.addRow(action_grid)
+
+        self.shap_explanation_box = QGroupBox("SHAP 解释")
+        self.shap_explanation_box.setVisible(False)
+        shap_layout = QVBoxLayout(self.shap_explanation_box)
+        shap_layout.setContentsMargins(8, 8, 8, 8)
+        self.shap_summary_widget = SHAPSummaryWidget()
+        shap_layout.addWidget(self.shap_summary_widget)
+
+        layout.addWidget(controls_box)
+        layout.addWidget(self.shap_explanation_box, stretch=1)
+        return panel
+
+    def _build_training_results_panel(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+        panel.setMinimumWidth(520)
 
         metrics_box = QGroupBox("训练结果")
-        metrics_form = QFormLayout(metrics_box)
+        metrics_layout = QVBoxLayout(metrics_box)
+        metrics_layout.setSpacing(10)
+
+        summary_grid = QGridLayout()
+        summary_grid.setHorizontalSpacing(18)
+        summary_grid.setVerticalSpacing(8)
         self.dataset_info_label = QLabel("-")
         self.metric_r2_label = QLabel("-")
         self.metric_mae_label = QLabel("-")
         self.metric_rmse_label = QLabel("-")
         self.metric_extra_label = QLabel("-")
         self.model_info_label = QLabel("-")
-        self.feature_selection_report_label = QLabel("-")
-        self.feature_selection_report_label.setWordWrap(True)
+        self.feature_selection_report_label = QPlainTextEdit()
+        self.feature_selection_report_label.setReadOnly(True)
+        self.feature_selection_report_label.setPlainText("-")
+        self.feature_selection_report_label.setMaximumBlockCount(200)
+        self.feature_selection_report_label.setMinimumHeight(86)
+        self.feature_selection_report_label.setMaximumHeight(140)
+        self.feature_selection_report_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
         self.training_progress = QProgressBar()
         self.training_progress.setRange(0, 0)
         self.training_progress.setVisible(False)
         self.explain_model_button = QPushButton("模型解释")
         self.explain_model_button.clicked.connect(self._explain_model)
         self.explain_model_button.setEnabled(False)
-        metrics_form.addRow("数据概况", self.dataset_info_label)
-        metrics_form.addRow("模型信息", self.model_info_label)
-        metrics_form.addRow("主指标", self.metric_r2_label)
-        metrics_form.addRow("辅助指标 1", self.metric_mae_label)
-        metrics_form.addRow("辅助指标 2", self.metric_rmse_label)
-        metrics_form.addRow("CV / 搜索", self.metric_extra_label)
-        metrics_form.addRow("特征筛选", self.feature_selection_report_label)
-        metrics_form.addRow("训练状态", self.training_progress)
-        metrics_form.addRow("", self.explain_model_button)
+        for label in (
+            self.dataset_info_label,
+            self.model_info_label,
+            self.metric_r2_label,
+            self.metric_mae_label,
+            self.metric_rmse_label,
+            self.metric_extra_label,
+        ):
+            label.setWordWrap(True)
+            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
-        self.shap_summary_widget = SHAPSummaryWidget()
-        self.shap_summary_widget.setVisible(False)
-        self.canvas = MatplotlibCanvas(width=6.4, height=4.6)
+        summary_grid.addWidget(QLabel("数据"), 0, 0)
+        summary_grid.addWidget(self.dataset_info_label, 0, 1, 1, 3)
+        summary_grid.addWidget(QLabel("模型"), 1, 0)
+        summary_grid.addWidget(self.model_info_label, 1, 1, 1, 3)
+        summary_grid.addWidget(QLabel("主指标"), 2, 0)
+        summary_grid.addWidget(self.metric_r2_label, 2, 1)
+        summary_grid.addWidget(QLabel("辅助指标"), 2, 2)
+        summary_grid.addWidget(self.metric_mae_label, 2, 3)
+        summary_grid.addWidget(QLabel("误差/分类"), 3, 0)
+        summary_grid.addWidget(self.metric_rmse_label, 3, 1)
+        summary_grid.addWidget(QLabel("CV / 搜索"), 3, 2)
+        summary_grid.addWidget(self.metric_extra_label, 3, 3)
+        summary_grid.setColumnStretch(1, 1)
+        summary_grid.setColumnStretch(3, 1)
 
-        layout.addWidget(controls_box)
+        status_row = QHBoxLayout()
+        status_row.addWidget(self.training_progress, stretch=1)
+        status_row.addWidget(self.explain_model_button)
+
+        metrics_layout.addLayout(summary_grid)
+        metrics_layout.addWidget(QLabel("特征筛选"))
+        metrics_layout.addWidget(self.feature_selection_report_label)
+        metrics_layout.addLayout(status_row)
+
+        self.canvas = MatplotlibCanvas(width=6.6, height=3.6)
+        self.canvas.setMinimumHeight(300)
+        self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        plot_box = QGroupBox("模型表现")
+        plot_layout = QVBoxLayout(plot_box)
+        plot_layout.setContentsMargins(10, 10, 10, 10)
+        plot_layout.addWidget(self.canvas)
+
         layout.addWidget(metrics_box)
-        layout.addWidget(self.shap_summary_widget, stretch=1)
-        layout.addWidget(self.canvas, stretch=1)
+        layout.addWidget(plot_box, stretch=1)
         self._update_explain_button_state()
         return panel
 
@@ -233,14 +301,19 @@ class MoleculeDesignPage(BasePage):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
+        panel.setMinimumWidth(260)
+        panel.setMaximumWidth(360)
 
         prediction_box = QGroupBox("单分子预测")
         prediction_layout = QVBoxLayout(prediction_box)
+        prediction_layout.setSpacing(10)
 
         self.smiles_input = QLineEdit()
         self.smiles_input.setPlaceholderText("输入 SMILES，例如 CCO")
 
         self.feature_text_edit = QPlainTextEdit()
+        self.feature_text_edit.setMinimumHeight(120)
+        self.feature_text_edit.setMaximumHeight(180)
         self.feature_text_edit.setPlaceholderText(
             '输入 JSON 或 key=value 特征，例如:\n{"mol_wt": 88.0, "tpsa": 26.3}\n或\nmol_wt=88.0\ntpsa=26.3'
         )
@@ -250,13 +323,15 @@ class MoleculeDesignPage(BasePage):
 
         self.prediction_result_label = QLabel("尚未预测")
         self.prediction_result_label.setWordWrap(True)
+        self.prediction_result_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.prediction_result_label.setMinimumHeight(72)
         self.shap_force_widget = SHAPForceWidget()
         self.shap_force_widget.setVisible(False)
 
         prediction_layout.addWidget(QLabel("SMILES"))
         prediction_layout.addWidget(self.smiles_input)
         prediction_layout.addWidget(QLabel("手动特征输入"))
-        prediction_layout.addWidget(self.feature_text_edit, stretch=1)
+        prediction_layout.addWidget(self.feature_text_edit)
         prediction_layout.addWidget(predict_button)
         prediction_layout.addWidget(self.prediction_result_label)
         prediction_layout.addWidget(self.shap_force_widget, stretch=1)
@@ -347,7 +422,7 @@ class MoleculeDesignPage(BasePage):
     def _handle_training_finished(self, artifact: dict[str, object]) -> None:
         self.current_artifact = artifact
         self.current_explanation = None
-        self.shap_summary_widget.setVisible(False)
+        self._reset_explanation_panel()
         self.shap_force_widget.setVisible(False)
         self._render_training_artifact(artifact)
 
@@ -386,6 +461,9 @@ class MoleculeDesignPage(BasePage):
         self.canvas.draw_idle()
         self._update_explain_button_state()
 
+    def _reset_explanation_panel(self) -> None:
+        self.shap_explanation_box.setVisible(False)
+
     def _display_metrics(self, artifact: dict[str, object]) -> None:
         metrics = artifact["metrics"]
         if not isinstance(metrics, dict):
@@ -412,10 +490,10 @@ class MoleculeDesignPage(BasePage):
     def _display_feature_selection_report(self, artifact: dict[str, object]) -> None:
         report = artifact.get("feature_selection_report")
         if not isinstance(report, dict):
-            self.feature_selection_report_label.setText("-")
+            self.feature_selection_report_label.setPlainText("-")
             return
         if report.get("strategy") == "none":
-            self.feature_selection_report_label.setText(
+            self.feature_selection_report_label.setPlainText(
                 f"未启用特征筛选（共 {report.get('final_feature_count', 0)} 个特征）"
             )
             return
@@ -432,7 +510,7 @@ class MoleculeDesignPage(BasePage):
             preview_items = [str(feature) for feature in selected_features[:12]]
             suffix = " ..." if len(selected_features) > 12 else ""
             preview = f" | 最终特征: {', '.join(preview_items)}{suffix}"
-        self.feature_selection_report_label.setText(
+        self.feature_selection_report_label.setPlainText(
             f"{report.get('strategy', 'none')}: {report.get('initial_feature_count')} -> {report.get('final_feature_count')}"
             + (f" | {'; '.join(stage_parts)}" if stage_parts else "")
             + preview
@@ -467,7 +545,7 @@ class MoleculeDesignPage(BasePage):
             self.explain_model_button.setToolTip("请安装 shap 库以启用模型解释功能")
             return
         has_artifact = self.current_artifact is not None
-        can_run = has_artifact and self._training_thread is None and self._explanation_thread is None
+        can_run = has_artifact and self._training_thread is None
         self.explain_model_button.setEnabled(can_run)
         self.explain_model_button.setToolTip("计算并展示 SHAP 全局模型解释" if has_artifact else "请先训练或读取模型")
 
@@ -478,35 +556,28 @@ class MoleculeDesignPage(BasePage):
         if not self.model_service.is_explainer_available():
             QMessageBox.information(self, "缺少 SHAP", "请安装 shap 库以启用模型解释功能。")
             return
-        if self._explanation_thread is not None:
-            QMessageBox.information(self, "正在解释", "当前已有模型解释任务正在运行。")
-            return
-
         self.explain_model_button.setText("解释计算中...")
         self.explain_model_button.setEnabled(False)
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
 
-        thread = QThread(self)
-        worker = ModelExplanationWorker(self.model_service, dict(self.current_artifact))
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.finished.connect(self._handle_explanation_finished)
-        worker.failed.connect(self._handle_explanation_failed)
-        worker.finished.connect(thread.quit)
-        worker.failed.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        worker.failed.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(self._handle_explanation_thread_finished)
-        self._explanation_thread = thread
-        self._explanation_worker = worker
-        thread.start()
+        try:
+            explanation = self.model_service.explain_model(dict(self.current_artifact))
+        except (RuntimeError, TypeError, ValueError) as exc:
+            logger.exception("Molecule model explanation failed")
+            self._handle_explanation_failed(str(exc))
+        else:
+            self._handle_explanation_finished(explanation)
+        finally:
+            self.explain_model_button.setText("模型解释")
+            self._update_explain_button_state()
+            QApplication.restoreOverrideCursor()
 
     @Slot(object)
     def _handle_explanation_finished(self, explanation: object) -> None:
         self.current_explanation = explanation
         self.shap_summary_widget.load_explanation(explanation)  # type: ignore[arg-type]
-        self.shap_summary_widget.setVisible(True)
+        self.shap_explanation_box.setVisible(True)
 
     @Slot(str)
     def _handle_explanation_failed(self, message: str) -> None:
@@ -567,7 +638,7 @@ class MoleculeDesignPage(BasePage):
 
         self.current_artifact = artifact
         self.current_explanation = None
-        self.shap_summary_widget.setVisible(False)
+        self._reset_explanation_panel()
         self.shap_force_widget.setVisible(False)
         self.model_info_label.setText(
             f"{artifact['model_name']} | 目标: {artifact['target_name']} | 特征数: {len(artifact['feature_names'])}"

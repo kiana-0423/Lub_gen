@@ -1,13 +1,7 @@
-name,smiles,source,feature_mol_wt,feature_mol_logp,feature_tpsa,feature_h_donors,feature_h_acceptors,feature_rotatable_bonds,feature_ring_count,feature_fraction_csp3,property_conductivity,property_viscosity,property_capacity
-Water,O,example,18.02,-1.38,31.50,0,0,0,0,0.00,14.80,1.00,88.00
-Ethanol,CCO,example,46.07,-0.31,20.23,1,1,0,0,1.00,9.50,1.20,102.00
-Acetonitrile,CC#N,example,41.05,-0.34,23.79,0,1,0,0,0.50,12.20,0.45,98.00
-Dimethyl Carbonate,COC(=O)OC,example,90.08,0.20,35.53,0,3,2,0,1.00,7.10,0.60,105.00
-Ethylene Carbonate,O=C1OCCO1,example,88.06,-0.20,35.53,0,3,0,1,0.50,10.80,1.92,120.00
-Propylene Carbonate,CC1COC(=O)O1,example,102.09,0.10,35.53,0,3,1,1,0.75,9.40,2.50,118.00
-Dimethyl Sulfoxide,CS(=O)C,example,78.13,-1.35,17.07,0,1,0,0,1.00,11.60,2.10,111.00
-Sulfolane,O=S1(=O)CCCC1,example,120.17,-0.70,34.14,0,2,0,1,1.00,8.60,9.80,126.00
-Tetrahydrofuran,C1CCOC1,example,72.11,0.46,9.23,0,1,0,1,1.00,5.80,0.55,97.00
-NMP,CN1CCCC1=O,example,99.13,-0.38,20.31,0,2,0,1,1.00,10.20,1.67,113.00
-Diethyl Carbonate,CCOC(=O)OCC,example,118.13,1.00,26.30,0,3,4,0,1.00,6.40,0.75,107.00
-Gamma Butyrolactone,O=C1OCCC1,example,86.09,-0.40,26.30,0,2,0,1,0.75,9.10,1.70,116.00
+sample_id,smiles,molecule_name,molecular_formula,base_oil,additive_concentration,experiment_name,test_mode,upper_material,upper_type,upper_diameter,lower_material,lower_type,probe_diameter,lower_length,lower_width,lower_thickness,load,stroke,frequency,duration,speed,temperature,oxidation_onset_temperature,extreme_pressure_load,average_friction_coefficient,wear_scar_width,wear_scar_depth,wear_spot_diameter
+S-001,CCO,ethanol,C2H6O,PAO4,1.0,oxidation_screen,SRV,GCr15,ball,10.0,GCr15,disk,10.0,24.0,7.9,7.9,100,1.0,50,1800,1450,25,215,620,0.088,0.42,3.8,0.53
+S-002,CCCO,propanol,C3H8O,PAO4,1.5,oxidation_screen,SRV,GCr15,ball,10.0,GCr15,disk,10.0,24.0,7.9,7.9,120,1.0,50,1800,1450,25,228,690,0.081,0.39,3.4,0.49
+S-003,CCCCO,butanol,C4H10O,PAO6,2.0,load_sweep,SRV,GCr15,ball,10.0,Steel,plate,10.0,24.0,7.9,7.9,150,1.0,50,1800,1450,40,241,735,0.075,0.35,3.1,0.45
+S-004,CC(C)=O,acetone,C3H6O,Ester,1.0,load_sweep,FourBall,Steel,ball,12.7,Steel,cup,12.7,25.0,8.0,8.0,200,0.8,40,600,1450,25,198,540,0.102,0.51,4.5,0.64
+S-005,CC#N,acetonitrile,C2H3N,Ester,1.5,temperature_sweep,FourBall,Steel,ball,12.7,Steel,cup,12.7,25.0,8.0,8.0,250,0.8,40,600,1450,60,206,580,0.096,0.47,4.1,0.60
+S-006,COC(=O)OC,dimethyl_carbonate,C3H6O3,PAO6,2.5,temperature_sweep,SRV,Ceramic,ball,10.0,GCr15,disk,10.0,24.0,7.9,7.9,180,1.2,60,2400,1200,80,252,780,0.069,0.31,2.7,0.41

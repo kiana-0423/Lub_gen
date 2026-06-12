@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QPixmap, QResizeEvent
 from PySide6.QtWidgets import (
+    QDialog,
     QHeaderView,
+    QHBoxLayout,
     QLabel,
+    QPushButton,
+    QScrollArea,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -27,11 +31,24 @@ class SHAPSummaryWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
 
+        self._summary_pixmap: QPixmap | None = None
+
+        toolbar_layout = QHBoxLayout()
+        toolbar_layout.setContentsMargins(0, 0, 0, 0)
+        toolbar_layout.addStretch()
+        self.open_summary_button = QPushButton("放大查看")
+        self.open_summary_button.setEnabled(False)
+        self.open_summary_button.clicked.connect(self._open_summary_dialog)
+        toolbar_layout.addWidget(self.open_summary_button)
+        layout.addLayout(toolbar_layout)
+
         splitter = QSplitter(Qt.Orientation.Vertical)
         self.summary_label = QLabel("尚未生成模型解释。")
         self.summary_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.summary_label.setMinimumHeight(220)
         self.summary_label.setScaledContents(False)
+        self.summary_label.setToolTip("双击 SHAP 图可放大查看")
+        self.summary_label.installEventFilter(self)
 
         self.importance_table = QTableWidget(0, 3)
         self.importance_table.setHorizontalHeaderLabels(["排名", "特征名", "SHAP 重要性"])
@@ -50,16 +67,14 @@ class SHAPSummaryWidget(QWidget):
     def load_explanation(self, explanation: SHAPExplanation) -> None:
         """Load a SHAP explanation into the plot label and ranking table."""
         image_path = Path(explanation.summary_plot_path)
+        self._summary_pixmap = None
+        self.open_summary_button.setEnabled(False)
         if image_path.is_file():
             pixmap = QPixmap(str(image_path))
             if not pixmap.isNull():
-                self.summary_label.setPixmap(
-                    pixmap.scaled(
-                        self.summary_label.size(),
-                        Qt.AspectRatioMode.KeepAspectRatio,
-                        Qt.TransformationMode.SmoothTransformation,
-                    )
-                )
+                self._summary_pixmap = pixmap
+                self.open_summary_button.setEnabled(True)
+                self._refresh_summary_preview()
         else:
             self.summary_label.setText("摘要图文件不存在。")
 
@@ -73,6 +88,49 @@ class SHAPSummaryWidget(QWidget):
             self.importance_table.setItem(row_index, 0, rank_item)
             self.importance_table.setItem(row_index, 1, QTableWidgetItem(str(feature_name)))
             self.importance_table.setItem(row_index, 2, value_item)
+
+    def eventFilter(self, watched: object, event: QEvent) -> bool:
+        if watched is self.summary_label and event.type() == QEvent.Type.MouseButtonDblClick:
+            self._open_summary_dialog()
+            return True
+        return super().eventFilter(watched, event)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._refresh_summary_preview()
+
+    def _refresh_summary_preview(self) -> None:
+        if self._summary_pixmap is None or self._summary_pixmap.isNull():
+            return
+        self.summary_label.setPixmap(
+            self._summary_pixmap.scaled(
+                self.summary_label.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+
+    def _open_summary_dialog(self) -> None:
+        if self._summary_pixmap is None or self._summary_pixmap.isNull():
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("SHAP 图放大查看")
+        dialog.resize(1100, 760)
+
+        layout = QVBoxLayout(dialog)
+        image_label = QLabel()
+        image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        image_label.setPixmap(self._summary_pixmap)
+        image_label.resize(self._summary_pixmap.size())
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(False)
+        scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        scroll_area.setWidget(image_label)
+        layout.addWidget(scroll_area)
+
+        dialog.exec()
 
 
 class SHAPForceWidget(QWidget):

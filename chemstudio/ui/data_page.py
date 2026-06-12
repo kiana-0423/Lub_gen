@@ -72,6 +72,14 @@ class DataPage(BasePage):
         refresh_button = QPushButton("刷新")
         refresh_button.clicked.connect(self.refresh_page)
 
+        self.compute_descriptors_button = QPushButton("计算描述符")
+        self.compute_descriptors_button.clicked.connect(self._compute_descriptors_for_current_rows)
+        if is_mordred_available():
+            self.compute_descriptors_button.setToolTip("为当前筛选结果中缺失描述符的分子计算 Mordred 描述符")
+        else:
+            self.compute_descriptors_button.setEnabled(False)
+            self.compute_descriptors_button.setToolTip("Mordred 未安装，无法计算描述符")
+
         self.export_features_button = QPushButton("导出特征 CSV")
         self.export_features_button.clicked.connect(self._export_features_csv)
         if is_mordred_available():
@@ -87,6 +95,7 @@ class DataPage(BasePage):
         control_layout.addWidget(self.search_input, stretch=1)
         control_layout.addWidget(import_button)
         control_layout.addWidget(refresh_button)
+        control_layout.addWidget(self.compute_descriptors_button)
         control_layout.addWidget(self.export_features_button)
         control_layout.addWidget(delete_button)
 
@@ -191,6 +200,35 @@ class DataPage(BasePage):
             f"已导入 {result['row_count']} 条记录。\n来源文件: {Path(file_path).name}",
         )
 
+    def _compute_descriptors_for_current_rows(self) -> None:
+        if not is_mordred_available():
+            QMessageBox.information(self, "无法计算", "Mordred 未安装，无法计算描述符。")
+            return
+        if self.dataset.empty:
+            QMessageBox.information(self, "没有数据", "当前没有可计算描述符的分子记录。")
+            return
+
+        molecule_ids = [int(value) for value in self.dataset["id"].dropna().tolist()]
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            result = self.data_import_service.compute_missing_descriptors(molecule_ids)
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.exception("Failed to compute descriptors for current rows.")
+            QMessageBox.critical(self, "描述符计算失败", str(exc))
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        self.refresh_page()
+        QMessageBox.information(
+            self,
+            "描述符计算完成",
+            "已处理当前筛选结果。\n"
+            f"新计算: {result['computed_count']} 个分子\n"
+            f"已跳过: {result['skipped_count']} 个分子\n"
+            f"失败/无有效描述符: {result['failed_count']} 个分子",
+        )
+
     def _export_features_csv(self) -> None:
         if not is_mordred_available():
             QMessageBox.information(self, "无法导出", "Mordred 未安装，无法导出描述符特征。")
@@ -260,8 +298,11 @@ class DataPage(BasePage):
         if confirmed != QMessageBox.StandardButton.Yes:
             return
 
-        self.molecule_repository.delete_molecule(molecule_id)
+        if not self.molecule_repository.delete_molecule(molecule_id):
+            QMessageBox.warning(self, "删除失败", f"未找到分子 ID {molecule_id}，请刷新后重试。")
+            return
         self.refresh_page()
+        QMessageBox.information(self, "删除完成", f"已删除分子 ID {molecule_id}。")
 
     def _sync_table_selection(self) -> None:
         if self.dataset.empty:

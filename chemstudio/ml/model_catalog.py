@@ -16,10 +16,13 @@ from sklearn.svm import SVC, SVR
 
 from chemstudio.ml.base import ProblemType
 
+_XGBOOST_IMPORT_ERROR: Exception | None = None
+
 try:  # pragma: no cover - optional dependency
     from xgboost import XGBRegressor
-except ImportError:  # pragma: no cover
+except Exception as exc:  # pragma: no cover
     XGBRegressor = None
+    _XGBOOST_IMPORT_ERROR = exc
 
 
 MODEL_CATALOG: list[dict[str, Any]] = [
@@ -106,7 +109,13 @@ def create_regression_model(model_key: str) -> Pipeline:
 
     if model_key == "xgboost":
         if XGBRegressor is None:
-            raise RuntimeError("XGBoost is not installed. Install `xgboost` to enable this model.")
+            message = "XGBoost is not available. Install `xgboost` to enable this model."
+            if _XGBOOST_IMPORT_ERROR is not None:
+                message = (
+                    "XGBoost is installed but could not be loaded. On macOS, install the OpenMP "
+                    f"runtime with `brew install libomp`. Details: {_XGBOOST_IMPORT_ERROR}"
+                )
+            raise RuntimeError(message)
         return Pipeline(
             steps=[
                 ("imputer", SimpleImputer(strategy="median")),

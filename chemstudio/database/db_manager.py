@@ -174,6 +174,12 @@ MIGRATED_COLUMNS = {
         "note": "TEXT NOT NULL DEFAULT ''",
         "conditions_json": "TEXT NOT NULL DEFAULT '{}'",
     },
+    "molecule_descriptors": {
+        "descriptor_values_json": "TEXT NOT NULL DEFAULT '{}'",
+        "fingerprint_bits": "TEXT NOT NULL DEFAULT ''",
+        "created_at": "TEXT NOT NULL DEFAULT ''",
+        "updated_at": "TEXT NOT NULL DEFAULT ''",
+    },
 }
 
 ALLOWED_SORT_DIRECTIONS = frozenset({"ASC", "DESC"})
@@ -220,6 +226,7 @@ class DatabaseManager:
 
     def _migrate_schema(self, connection: sqlite3.Connection) -> None:
         """Apply lightweight schema migrations required by newer formula features."""
+        self._drop_unique_canonical_smiles_constraint_if_needed(connection)
         self._ensure_column(connection, "molecules", "code", "TEXT")
         self._ensure_column(connection, "molecules", "smiles", "TEXT")
         self._ensure_column(connection, "molecules", "source", "TEXT")
@@ -233,11 +240,90 @@ class DatabaseManager:
         self._ensure_column(connection, "molecules", "updated_at", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column(connection, "formulas", "note", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column(connection, "formulas", "conditions_json", "TEXT NOT NULL DEFAULT '{}'")
+        self._ensure_column(connection, "molecule_descriptors", "descriptor_values_json", "TEXT NOT NULL DEFAULT '{}'")
+        self._ensure_column(connection, "molecule_descriptors", "fingerprint_bits", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column(connection, "molecule_descriptors", "created_at", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column(connection, "molecule_descriptors", "updated_at", "TEXT NOT NULL DEFAULT ''")
         connection.execute("UPDATE molecules SET updated_at = created_at WHERE updated_at = ''")
         connection.execute("UPDATE molecules SET canonical_smiles = smiles WHERE canonical_smiles = '' AND smiles IS NOT NULL")
         connection.execute("UPDATE molecules SET input_smiles = smiles WHERE input_smiles = '' AND smiles IS NOT NULL")
         connection.execute("UPDATE molecules SET smiles = canonical_smiles WHERE (smiles IS NULL OR smiles = '') AND canonical_smiles != ''")
         connection.execute("UPDATE molecules SET source = '' WHERE source IS NULL")
+        descriptor_columns = self._list_columns(connection, "molecule_descriptors")
+        if "descriptor_values" in descriptor_columns:
+            connection.execute(
+                """
+                UPDATE molecule_descriptors
+                SET descriptor_values_json = descriptor_values
+                WHERE descriptor_values_json = '{}'
+                  AND descriptor_values IS NOT NULL
+                  AND descriptor_values != ''
+                """
+            )
+        connection.execute("UPDATE molecule_descriptors SET updated_at = created_at WHERE updated_at = ''")
+
+    def _drop_unique_canonical_smiles_constraint_if_needed(self, connection: sqlite3.Connection) -> None:
+        """Allow multiple experimental samples to share the same molecule structure."""
+        unique_indexes = connection.execute("PRAGMA index_list(molecules)").fetchall()
+        for index_row in unique_indexes:
+            if int(index_row["unique"]) != 1:
+                continue
+            index_name = str(index_row["name"])
+            quoted_index_name = '"' + index_name.replace('"', '""') + '"'
+            index_columns = [
+                str(column_row["name"])
+                for column_row in connection.execute(f"PRAGMA index_info({quoted_index_name})").fetchall()
+            ]
+            if index_columns != ["canonical_smiles"]:
+                continue
+
+            if not index_name.startswith("sqlite_autoindex_"):
+                connection.execute(f"DROP INDEX IF EXISTS {quoted_index_name}")
+                return
+
+            connection.execute("PRAGMA foreign_keys = OFF")
+            connection.execute("PRAGMA legacy_alter_table = ON")
+            connection.execute("ALTER TABLE molecules RENAME TO molecules_legacy")
+            connection.execute(
+                """
+                CREATE TABLE molecules (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    code TEXT UNIQUE,
+                    name TEXT NOT NULL,
+                    smiles TEXT,
+                    input_smiles TEXT NOT NULL DEFAULT '',
+                    canonical_smiles TEXT NOT NULL DEFAULT '',
+                    inchi TEXT NOT NULL DEFAULT '',
+                    inchikey TEXT NOT NULL DEFAULT '',
+                    molblock TEXT NOT NULL DEFAULT '',
+                    notes TEXT NOT NULL DEFAULT '',
+                    is_hidden INTEGER NOT NULL DEFAULT 0,
+                    source TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT ''
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO molecules (
+                    id, code, name, smiles, input_smiles, canonical_smiles, inchi, inchikey,
+                    molblock, notes, is_hidden, source, created_at, updated_at
+                )
+                SELECT
+                    id, code, name, smiles, input_smiles, canonical_smiles, inchi, inchikey,
+                    molblock, notes, is_hidden, source, created_at, updated_at
+                FROM molecules_legacy
+                """
+            )
+            connection.execute("DROP TABLE molecules_legacy")
+            connection.execute("PRAGMA legacy_alter_table = OFF")
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_molecules_code ON molecules (code)")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_molecules_canonical_smiles ON molecules (canonical_smiles)")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_molecules_inchikey ON molecules (inchikey)")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_molecules_is_hidden ON molecules (is_hidden)")
+            return
 
     def _ensure_column(
         self,
@@ -252,13 +338,18 @@ class DatabaseManager:
         if allowed_columns.get(column_name) != column_definition:
             raise ValueError(f"Unsupported schema migration column: {table_name}.{column_name}")
         column_identifier = self._quote_identifier(column_name, set(allowed_columns))
-        columns = {
-            str(row["name"])
-            for row in connection.execute(f"PRAGMA table_info({table_identifier})").fetchall()
-        }
+        columns = self._list_columns(connection, table_name)
         if column_name in columns:
             return
         connection.execute(f"ALTER TABLE {table_identifier} ADD COLUMN {column_identifier} {column_definition}")
+
+    def _list_columns(self, connection: sqlite3.Connection, table_name: str) -> set[str]:
+        """Return SQLite column names for an allowlisted table."""
+        table_identifier = self._quote_identifier(table_name, SCHEMA_TABLE_NAMES)
+        return {
+            str(row["name"])
+            for row in connection.execute(f"PRAGMA table_info({table_identifier})").fetchall()
+        }
 
     def count_rows(self, table_name: str) -> int:
         """Return row count for a table."""
@@ -284,38 +375,99 @@ class DatabaseManager:
         return inserted_ids
 
     def _insert_molecule_record(self, connection: sqlite3.Connection, record: MoleculeImportRecord) -> int:
-        """写入单个分子及其特征、属性明细行，并返回新 ID。"""
+        """写入或更新单个分子及其特征、属性明细行，并返回目标 ID。"""
         created_at = datetime.now(timezone.utc).isoformat()
         canonical_smiles = record.canonical_smiles or record.smiles
         input_smiles = record.input_smiles or record.smiles
-        cursor = connection.execute(
-            """
-            INSERT INTO molecules (
-                code, name, smiles, input_smiles, canonical_smiles, inchi, inchikey,
-                molblock, notes, is_hidden, source, created_at, updated_at
+        molecule_id = self._find_existing_molecule_id_for_record(connection, record.code, canonical_smiles)
+        if molecule_id is None:
+            cursor = connection.execute(
+                """
+                INSERT INTO molecules (
+                    code, name, smiles, input_smiles, canonical_smiles, inchi, inchikey,
+                    molblock, notes, is_hidden, source, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.code,
+                    record.name,
+                    canonical_smiles,
+                    input_smiles,
+                    canonical_smiles,
+                    record.inchi,
+                    record.inchikey,
+                    record.molblock,
+                    record.notes,
+                    int(record.is_hidden),
+                    record.source,
+                    created_at,
+                    created_at,
+                ),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                record.code,
-                record.name,
-                canonical_smiles,
-                input_smiles,
-                canonical_smiles,
-                record.inchi,
-                record.inchikey,
-                record.molblock,
-                record.notes,
-                int(record.is_hidden),
-                record.source,
-                created_at,
-                created_at,
-            ),
-        )
-        molecule_id = int(cursor.lastrowid)
+            molecule_id = int(cursor.lastrowid)
+        else:
+            connection.execute(
+                """
+                UPDATE molecules
+                SET code = ?, name = ?, smiles = ?, input_smiles = ?, canonical_smiles = ?,
+                    inchi = ?, inchikey = ?, molblock = ?, notes = ?, is_hidden = ?,
+                    source = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    record.code,
+                    record.name,
+                    canonical_smiles,
+                    input_smiles,
+                    canonical_smiles,
+                    record.inchi,
+                    record.inchikey,
+                    record.molblock,
+                    record.notes,
+                    int(record.is_hidden),
+                    record.source,
+                    created_at,
+                    molecule_id,
+                ),
+            )
         self._replace_parameters(connection, molecule_id, record.parameters, created_at)
+        self._replace_feature_rows(connection, molecule_id, record.features)
+        self._replace_property_rows(connection, molecule_id, record.properties)
 
-        if record.features:
+        if record.descriptors:
+            self._save_descriptors(connection, molecule_id, record.descriptors, created_at)
+
+        return molecule_id
+
+    def _find_existing_molecule_id_for_record(
+        self,
+        connection: sqlite3.Connection,
+        code: str | None,
+        canonical_smiles: str,
+    ) -> int | None:
+        if code:
+            row = connection.execute("SELECT id FROM molecules WHERE code = ?", (code,)).fetchone()
+            if row is not None:
+                return int(row["id"])
+            return None
+        if canonical_smiles:
+            row = connection.execute(
+                "SELECT id FROM molecules WHERE canonical_smiles = ?",
+                (canonical_smiles,),
+            ).fetchone()
+            if row is not None:
+                return int(row["id"])
+        return None
+
+    def _replace_feature_rows(
+        self,
+        connection: sqlite3.Connection,
+        molecule_id: int,
+        features: dict[str, float],
+    ) -> None:
+        connection.execute("DELETE FROM molecular_features WHERE molecule_id = ?", (molecule_id,))
+        if features:
             connection.executemany(
                 """
                 INSERT INTO molecular_features (molecule_id, feature_name, feature_value)
@@ -323,11 +475,18 @@ class DatabaseManager:
                 """,
                 [
                     (molecule_id, feature_name, float(feature_value))
-                    for feature_name, feature_value in sorted(record.features.items())
+                    for feature_name, feature_value in sorted(features.items())
                 ],
             )
 
-        if record.properties:
+    def _replace_property_rows(
+        self,
+        connection: sqlite3.Connection,
+        molecule_id: int,
+        properties: dict[str, float],
+    ) -> None:
+        connection.execute("DELETE FROM property_data WHERE molecule_id = ?", (molecule_id,))
+        if properties:
             connection.executemany(
                 """
                 INSERT INTO property_data (molecule_id, property_name, property_value)
@@ -335,14 +494,9 @@ class DatabaseManager:
                 """,
                 [
                     (molecule_id, property_name, float(property_value))
-                    for property_name, property_value in sorted(record.properties.items())
+                    for property_name, property_value in sorted(properties.items())
                 ],
             )
-
-        if record.descriptors:
-            self._save_descriptors(connection, molecule_id, record.descriptors, created_at)
-
-        return molecule_id
 
     def save_molecule(self, payload: dict[str, object], molecule_id: int | None = None) -> dict[str, object]:
         """Create or update a molecule and its free-form parameters."""
@@ -646,9 +800,21 @@ class DatabaseManager:
     def delete_molecule(self, molecule_id: int) -> bool:
         """Delete a molecule and all child records."""
         with self.connect() as connection:
+            exists = connection.execute("SELECT id FROM molecules WHERE id = ?", (molecule_id,)).fetchone()
+            if exists is None:
+                return False
+            self._delete_molecule_children(connection, molecule_id)
             cursor = connection.execute("DELETE FROM molecules WHERE id = ?", (molecule_id,))
             connection.commit()
             return cursor.rowcount > 0
+
+    def _delete_molecule_children(self, connection: sqlite3.Connection, molecule_id: int) -> None:
+        """Remove child rows explicitly for legacy databases without full cascade FKs."""
+        connection.execute("UPDATE predictions SET molecule_id = NULL WHERE molecule_id = ?", (molecule_id,))
+        connection.execute("DELETE FROM molecule_parameters WHERE molecule_id = ?", (molecule_id,))
+        connection.execute("DELETE FROM molecule_descriptors WHERE molecule_id = ?", (molecule_id,))
+        connection.execute("DELETE FROM molecular_features WHERE molecule_id = ?", (molecule_id,))
+        connection.execute("DELETE FROM property_data WHERE molecule_id = ?", (molecule_id,))
 
     def set_molecule_hidden_state(self, molecule_id: int, hidden: bool) -> dict[str, object] | None:
         """Update a molecule's hidden state and return the updated detail."""
@@ -678,24 +844,9 @@ class DatabaseManager:
                 (molecule_id,),
             ).fetchone()
             if existing is None:
-                connection.execute(
-                    """
-                    INSERT INTO molecule_descriptors (
-                        molecule_id, descriptor_values_json, fingerprint_bits, created_at, updated_at
-                    )
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    (molecule_id, json.dumps(descriptors, ensure_ascii=False), fingerprint_bits, now, now),
-                )
+                self._insert_descriptor_row(connection, molecule_id, descriptors, fingerprint_bits, now)
             else:
-                connection.execute(
-                    """
-                    UPDATE molecule_descriptors
-                    SET descriptor_values_json = ?, fingerprint_bits = ?, updated_at = ?
-                    WHERE molecule_id = ?
-                    """,
-                    (json.dumps(descriptors, ensure_ascii=False), fingerprint_bits, now, molecule_id),
-                )
+                self._update_descriptor_row(connection, molecule_id, descriptors, fingerprint_bits, now)
             connection.commit()
 
     def _save_descriptors(
@@ -710,26 +861,71 @@ class DatabaseManager:
             "SELECT id FROM molecule_descriptors WHERE molecule_id = ?",
             (molecule_id,),
         ).fetchone()
-        payload = json.dumps(descriptors, ensure_ascii=False)
         if existing is None:
+            self._insert_descriptor_row(connection, molecule_id, descriptors, fingerprint_bits, timestamp)
+        else:
+            self._update_descriptor_row(connection, molecule_id, descriptors, fingerprint_bits, timestamp)
+
+    def _insert_descriptor_row(
+        self,
+        connection: sqlite3.Connection,
+        molecule_id: int,
+        descriptors: dict[str, object],
+        fingerprint_bits: str,
+        timestamp: str,
+    ) -> None:
+        payload = json.dumps(descriptors, ensure_ascii=False)
+        if "descriptor_values" in self._list_columns(connection, "molecule_descriptors"):
             connection.execute(
                 """
                 INSERT INTO molecule_descriptors (
-                    molecule_id, descriptor_values_json, fingerprint_bits, created_at, updated_at
+                    molecule_id, descriptor_values, descriptor_values_json,
+                    fingerprint_bits, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (molecule_id, payload, fingerprint_bits, timestamp, timestamp),
+                (molecule_id, payload, payload, fingerprint_bits, timestamp, timestamp),
             )
-        else:
+            return
+
+        connection.execute(
+            """
+            INSERT INTO molecule_descriptors (
+                molecule_id, descriptor_values_json, fingerprint_bits, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (molecule_id, payload, fingerprint_bits, timestamp, timestamp),
+        )
+
+    def _update_descriptor_row(
+        self,
+        connection: sqlite3.Connection,
+        molecule_id: int,
+        descriptors: dict[str, object],
+        fingerprint_bits: str,
+        timestamp: str,
+    ) -> None:
+        payload = json.dumps(descriptors, ensure_ascii=False)
+        if "descriptor_values" in self._list_columns(connection, "molecule_descriptors"):
             connection.execute(
                 """
                 UPDATE molecule_descriptors
-                SET descriptor_values_json = ?, fingerprint_bits = ?, updated_at = ?
+                SET descriptor_values = ?, descriptor_values_json = ?, fingerprint_bits = ?, updated_at = ?
                 WHERE molecule_id = ?
                 """,
-                (payload, fingerprint_bits, timestamp, molecule_id),
+                (payload, payload, fingerprint_bits, timestamp, molecule_id),
             )
+            return
+
+        connection.execute(
+            """
+            UPDATE molecule_descriptors
+            SET descriptor_values_json = ?, fingerprint_bits = ?, updated_at = ?
+            WHERE molecule_id = ?
+            """,
+            (payload, fingerprint_bits, timestamp, molecule_id),
+        )
 
     def list_feature_names(self) -> list[str]:
         """Return all distinct feature names."""

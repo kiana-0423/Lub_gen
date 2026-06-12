@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 
 import pandas as pd
 
@@ -20,43 +19,7 @@ class DescriptorRepository:
         descriptors: dict[str, object],
         fingerprint_bits: str = "",
     ) -> None:
-        now = datetime.now(timezone.utc).isoformat()
-        with self.db_manager.connect() as connection:
-            self._save_descriptors(connection, molecule_id, descriptors, now, fingerprint_bits=fingerprint_bits)
-            connection.commit()
-
-    def _save_descriptors(
-        self,
-        connection,
-        molecule_id: int,
-        descriptors: dict[str, object],
-        timestamp: str,
-        fingerprint_bits: str = "",
-    ) -> None:
-        existing = connection.execute(
-            "SELECT id FROM molecule_descriptors WHERE molecule_id = ?",
-            (molecule_id,),
-        ).fetchone()
-        payload = json.dumps(descriptors, ensure_ascii=False)
-        if existing is None:
-            connection.execute(
-                """
-                INSERT INTO molecule_descriptors (
-                    molecule_id, descriptor_values_json, fingerprint_bits, created_at, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (molecule_id, payload, fingerprint_bits, timestamp, timestamp),
-            )
-        else:
-            connection.execute(
-                """
-                UPDATE molecule_descriptors
-                SET descriptor_values_json = ?, fingerprint_bits = ?, updated_at = ?
-                WHERE molecule_id = ?
-                """,
-                (payload, fingerprint_bits, timestamp, molecule_id),
-            )
+        self.db_manager.save_descriptors(molecule_id, descriptors, fingerprint_bits=fingerprint_bits)
 
     def list_feature_names(self) -> list[str]:
         with self.db_manager.connect() as connection:

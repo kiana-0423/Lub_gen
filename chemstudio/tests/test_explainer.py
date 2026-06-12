@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import threading
+import warnings
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -28,6 +31,17 @@ def test_global_importance_sorted() -> None:
     assert importance["a"] == pytest.approx(2.0)
 
 
+def test_transform_frame_uses_output_columns_when_imputer_drops_empty_features() -> None:
+    frame = pd.DataFrame({"kept": [1.0, 2.0, 3.0], "empty": [np.nan, np.nan, np.nan]})
+    pipeline = Pipeline([("imputer", SimpleImputer(strategy="median"))])
+    pipeline.fit(frame)
+
+    transformed = explainer._transform_frame(pipeline, frame)
+
+    assert list(transformed.columns) == ["kept"]
+    assert transformed.shape == (3, 1)
+
+
 def test_explainer_raises_when_shap_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(explainer, "shap", None)
 
@@ -37,6 +51,38 @@ def test_explainer_raises_when_shap_unavailable(monkeypatch: pytest.MonkeyPatch)
             pd.DataFrame({"x": [1.0, 2.0]}),
             "random_forest",
         )
+
+
+def test_summary_plot_uses_non_gui_backend_in_worker_thread(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeShap:
+        @staticmethod
+        def summary_plot(shap_values, x_frame, *, max_display, show):
+            del shap_values, x_frame, max_display, show
+
+    monkeypatch.setattr(explainer, "shap", FakeShap())
+    captured_warnings: list[warnings.WarningMessage] = []
+    captured_errors: list[BaseException] = []
+
+    def run_plot() -> None:
+        try:
+            with warnings.catch_warnings(record=True) as records:
+                warnings.simplefilter("always")
+                output = explainer._save_summary_plot(
+                    np.asarray([[0.1, -0.2]]),
+                    pd.DataFrame({"a": [1.0], "b": [2.0]}),
+                    max_display=2,
+                )
+                assert output.is_file()
+                captured_warnings.extend(records)
+        except BaseException as exc:  # pragma: no cover - reported to main thread
+            captured_errors.append(exc)
+
+    thread = threading.Thread(target=run_plot)
+    thread.start()
+    thread.join()
+
+    assert not captured_errors
+    assert not any("Matplotlib GUI outside of the main thread" in str(item.message) for item in captured_warnings)
 
 
 @pytest.mark.skipif(not explainer.is_shap_available(), reason="SHAP is not installed")

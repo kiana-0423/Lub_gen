@@ -1,0 +1,19 @@
+2026-06-13 07:29:55,382 | INFO | chemstudio.ml.featurizers.mordred_featurizer | Initialized Mordred calculator with 1613 descriptors.
+2026-06-13 07:38:54,903 | INFO | chemstudio.ml.featurizers.mordred_featurizer | Initialized Mordred calculator with 1613 descriptors.
+2026-06-13 07:46:57,883 | INFO | chemstudio.ml.featurizers.mordred_featurizer | Initialized Mordred calculator with 1613 descriptors.
+2026-06-13 07:50:56,366 | INFO | chemstudio.ml.featurizers.mordred_featurizer | Initialized Mordred calculator with 1613 descriptors.
+2026-06-13 08:08:54,021 | ERROR | chemstudio.ui.molecule_design_page | Background molecule model training failed
+Traceback (most recent call last):
+  File "/Users/guo/Documents/workspace/Lub_gen/chemstudio/ui/molecule_design_page.py", line 58, in run
+    artifact = self.model_service.train_model(**self.parameters)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/guo/Documents/workspace/Lub_gen/chemstudio/services/model_service.py", line 100, in train_model
+    artifact = train_fn(
+               ^^^^^^^^^
+  File "/Users/guo/Documents/workspace/Lub_gen/chemstudio/ml/trainer.py", line 46, in train_regression_model
+    model_row = get_model_row(model_key)
+                ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/guo/Documents/workspace/Lub_gen/chemstudio/ml/model_catalog.py", line 78, in get_model_row
+    raise RuntimeError(f"Model `{model_row['label']}` is not available in this environment.")
+RuntimeError: Model `XGBoost` is not available in this environment.
+2026-06-13 08:41:32,719 | INFO | chemstudio.ml.featurizers.mordred_featurizer | Initialized Mordred calculator with 1613 descriptors.

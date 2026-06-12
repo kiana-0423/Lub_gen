@@ -2,10 +2,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import html
+import os
 import tempfile
 from pathlib import Path
 from typing import Any, Literal
 
+from chemstudio.utils.config import AppConfig
+from chemstudio.utils.file_utils import ensure_directory
+
+os.environ.setdefault("MPLCONFIGDIR", str(ensure_directory(AppConfig.LOG_DIR / "matplotlib")))
+import matplotlib
+
+matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -22,12 +30,12 @@ from chemstudio.ml.base import ProblemType
 
 try:  # pragma: no cover - optional dependency
     import shap
-except ImportError:  # pragma: no cover
+except Exception:  # pragma: no cover
     shap = None
 
 try:  # pragma: no cover - optional dependency
     from xgboost import XGBClassifier, XGBRegressor
-except ImportError:  # pragma: no cover
+except Exception:  # pragma: no cover
     XGBClassifier = None
     XGBRegressor = None
 
@@ -80,12 +88,13 @@ def create_explainer(
     training_frame = _as_numeric_frame(x_train)
     final_model, preprocessor = _split_pipeline(model)
     transformed_train = _transform_frame(preprocessor, training_frame)
+    explanation_feature_names = list(transformed_train.columns)
 
     if _is_tree_model(final_model, model_key):
         return ExplainerBundle(
             explainer=shap.TreeExplainer(final_model),
             kind="tree",
-            feature_names=list(training_frame.columns),
+            feature_names=explanation_feature_names,
             model=model,
             preprocessor=preprocessor,
         )
@@ -94,7 +103,7 @@ def create_explainer(
         return ExplainerBundle(
             explainer=shap.LinearExplainer(final_model, _sample_frame(transformed_train, 100)),
             kind="linear",
-            feature_names=list(training_frame.columns),
+            feature_names=explanation_feature_names,
             model=model,
             preprocessor=preprocessor,
         )
@@ -136,12 +145,13 @@ def explain_model(
     )
     shap_values = _compute_shap_values(bundle, test_frame, problem_type)  # type: ignore[arg-type]
     base_value = _extract_base_value(bundle.explainer, problem_type)  # type: ignore[arg-type]
-    global_importance = _global_importance(shap_values, feature_names)
-    summary_plot_path = _save_summary_plot(shap_values, test_frame, max_display=max_display)
+    summary_frame = _transform_frame(bundle.preprocessor, test_frame) if bundle.kind in {"tree", "linear"} else test_frame
+    global_importance = _global_importance(shap_values, bundle.feature_names)
+    summary_plot_path = _save_summary_plot(shap_values, summary_frame, max_display=max_display)
 
     return SHAPExplanation(
         shap_values=shap_values,
-        feature_names=feature_names,
+        feature_names=bundle.feature_names,
         base_value=base_value,
         global_importance=global_importance,
         summary_plot_path=str(summary_plot_path),
@@ -165,7 +175,9 @@ def explain_single_prediction(
 
     sample_frame = _align_frame(feature_values, feature_names).head(1)
     shap_row = _compute_shap_values(bundle, sample_frame, problem_type)[0]  # type: ignore[arg-type]
-    feature_row = sample_frame.iloc[0].to_dict()
+    explain_frame = _transform_frame(bundle.preprocessor, sample_frame) if bundle.kind in {"tree", "linear"} else sample_frame
+    feature_row = explain_frame.iloc[0].to_dict()
+    explanation_feature_names = list(bundle.feature_names)
     prediction = artifact["model"].predict(sample_frame)
     prediction_value = _extract_prediction_value(prediction, problem_type)  # type: ignore[arg-type]
     base_value = _extract_base_value(bundle.explainer, problem_type)  # type: ignore[arg-type]
@@ -176,7 +188,7 @@ def explain_single_prediction(
                 "value": float(feature_row[feature]),
                 "shap_value": float(shap_row[index]),
             }
-            for index, feature in enumerate(feature_names)
+            for index, feature in enumerate(explanation_feature_names)
         ),
         key=lambda row: abs(row["shap_value"]),
         reverse=True,
@@ -185,7 +197,7 @@ def explain_single_prediction(
     return {
         "base_value": base_value,
         "prediction": prediction_value,
-        "features": feature_names,
+        "features": explanation_feature_names,
         "feature_values": {key: float(value) for key, value in feature_row.items()},
         "shap_values": [float(value) for value in shap_row],
         "top_contributions": contribution_rows[:20],
@@ -235,7 +247,35 @@ def _transform_frame(preprocessor: Any | None, frame: pd.DataFrame) -> pd.DataFr
     if preprocessor is None:
         return frame
     transformed = preprocessor.transform(frame)
-    return pd.DataFrame(np.asarray(transformed), columns=list(frame.columns), index=frame.index)
+    transformed_array = np.asarray(transformed)
+    columns = _get_transformed_columns(preprocessor, list(frame.columns), transformed_array.shape[1])
+    return pd.DataFrame(transformed_array, columns=columns, index=frame.index)
+
+
+def _get_transformed_columns(preprocessor: Any, input_columns: list[str], output_count: int) -> list[str]:
+    try:
+        names = [str(name) for name in preprocessor.get_feature_names_out(input_columns)]
+    except (AttributeError, TypeError, ValueError):
+        names = []
+    if len(names) == output_count:
+        return names
+    if len(input_columns) == output_count:
+        return input_columns
+
+    for step in getattr(preprocessor, "steps", []):
+        estimator = step[1]
+        statistics = getattr(estimator, "statistics_", None)
+        if statistics is None:
+            continue
+        kept_columns = [
+            column
+            for column, statistic in zip(input_columns, np.asarray(statistics, dtype=float), strict=False)
+            if not np.isnan(statistic)
+        ]
+        if len(kept_columns) == output_count:
+            return kept_columns
+
+    return [f"feature_{index}" for index in range(output_count)]
 
 
 def _is_tree_model(model: Any, model_key: str) -> bool:
@@ -330,11 +370,11 @@ def _global_importance(shap_values: np.ndarray, feature_names: list[str]) -> dic
 
 def _save_summary_plot(shap_values: np.ndarray, x_frame: pd.DataFrame, *, max_display: int) -> Path:
     output = Path(tempfile.NamedTemporaryFile(prefix="chemstudio_shap_", suffix=".png", delete=False).name)
-    plt.figure(figsize=(8, 4.8), dpi=100)
+    plt.figure(figsize=(10, 6), dpi=160)
     try:
         shap.summary_plot(shap_values, x_frame, max_display=max_display, show=False)
         plt.tight_layout()
-        plt.savefig(output, bbox_inches="tight", dpi=100)
+        plt.savefig(output, bbox_inches="tight", dpi=160)
     finally:
         plt.close()
     return output

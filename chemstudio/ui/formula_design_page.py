@@ -872,7 +872,7 @@ class FormulaDesignPage(BasePage):
             self.formula_explain_button.setToolTip("请安装 shap 库以启用模型解释功能")
             return
         has_artifact = self.current_artifact is not None
-        can_run = has_artifact and self._training_thread is None and self._explanation_thread is None
+        can_run = has_artifact and self._training_thread is None
         self.formula_explain_button.setEnabled(can_run)
         self.formula_explain_button.setToolTip("计算并展示 SHAP 全局模型解释" if has_artifact else "请先训练模型")
 
@@ -883,29 +883,22 @@ class FormulaDesignPage(BasePage):
         if not self.model_service.is_explainer_available():
             QMessageBox.information(self, "缺少 SHAP", "请安装 shap 库以启用模型解释功能。")
             return
-        if self._explanation_thread is not None:
-            QMessageBox.information(self, "正在解释", "当前已有模型解释任务正在运行。")
-            return
-
         self.formula_explain_button.setText("解释计算中...")
         self.formula_explain_button.setEnabled(False)
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
 
-        thread = QThread(self)
-        worker = FormulaExplanationWorker(self.model_service, dict(self.current_artifact))
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.finished.connect(self._handle_explanation_finished)
-        worker.failed.connect(self._handle_explanation_failed)
-        worker.finished.connect(thread.quit)
-        worker.failed.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        worker.failed.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(self._handle_explanation_thread_finished)
-        self._explanation_thread = thread
-        self._explanation_worker = worker
-        thread.start()
+        try:
+            explanation = self.model_service.explain_model(dict(self.current_artifact))
+        except (RuntimeError, TypeError, ValueError) as exc:
+            logger.exception("Formulation model explanation failed")
+            self._handle_explanation_failed(str(exc))
+        else:
+            self._handle_explanation_finished(explanation)
+        finally:
+            self.formula_explain_button.setText("模型解释")
+            self._update_explain_button_state()
+            QApplication.restoreOverrideCursor()
 
     @Slot(object)
     def _handle_explanation_finished(self, explanation: object) -> None:
