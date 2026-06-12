@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from chemstudio.database.db_manager import DatabaseManager
 from chemstudio.services.data_import_service import DataImportService
@@ -105,12 +106,16 @@ def test_model_service_trains_saves_loads_predicts_and_supports_formulas(tmp_pat
         test_size=0.33,
         cv_mode=True,
         n_folds=3,
+        feature_selection="full",
+        max_features=2,
     )
     assert artifact["model_name"] == "RandomForestRegressor"
     assert artifact["problem_type"] == "regression"
     assert artifact["target_name"] == "viscosity"
     assert {"mol_wt", "mol_logp", "tpsa"}.issubset(set(artifact["feature_names"]))
-    assert len(artifact["feature_names"]) > 3
+    assert len(artifact["feature_names"]) >= 3
+    assert artifact["feature_selection_report"]["strategy"] == "full"
+    assert artifact["feature_selection_report"]["final_feature_count"] == len(artifact["feature_names"])
     assert len(artifact["y_true"]) == len(artifact["y_pred"])
     assert artifact["cv_results"]["n_folds"] == 3
 
@@ -131,7 +136,9 @@ def test_model_service_trains_saves_loads_predicts_and_supports_formulas(tmp_pat
 
     save_path = tmp_path / "viscosity_model.joblib"
     model_service.save_model(artifact, save_path)
-    loaded_artifact = model_service.load_model(save_path)
+    with pytest.raises(ValueError, match="trusted source"):
+        model_service.load_model(save_path)
+    loaded_artifact = model_service.load_model(save_path, trusted_source=True)
     assert loaded_artifact["feature_names"] == artifact["feature_names"]
 
     prediction = model_service.predict(

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from datetime import datetime
+import logging
 from pathlib import Path
 
 from PySide6.QtCore import QUrl, Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
@@ -23,9 +26,14 @@ except ImportError:  # pragma: no cover
     QWebEngineView = None
 
 from chemstudio.database.db_manager import DatabaseManager
+from chemstudio.database.repositories import MoleculeRepository
+from chemstudio.ml.featurizers import is_mordred_available
 from chemstudio.services.data_import_service import DataImportService
 from chemstudio.services.visualization_service import VisualizationService
 from chemstudio.ui.widgets import BasePage, PandasTableModel
+
+
+logger = logging.getLogger(__name__)
 
 
 class DataPage(BasePage):
@@ -36,9 +44,11 @@ class DataPage(BasePage):
         db_manager: DatabaseManager,
         data_import_service: DataImportService,
         visualization_service: VisualizationService,
+        molecule_repository: MoleculeRepository | None = None,
     ) -> None:
         super().__init__()
         self.db_manager = db_manager
+        self.molecule_repository = molecule_repository or MoleculeRepository(db_manager)
         self.data_import_service = data_import_service
         self.visualization_service = visualization_service
         self.dataset_model = PandasTableModel()
@@ -62,6 +72,14 @@ class DataPage(BasePage):
         refresh_button = QPushButton("刷新")
         refresh_button.clicked.connect(self.refresh_page)
 
+        self.export_features_button = QPushButton("导出特征 CSV")
+        self.export_features_button.clicked.connect(self._export_features_csv)
+        if is_mordred_available():
+            self.export_features_button.setToolTip("导出当前筛选后的 Mordred 特征宽表")
+        else:
+            self.export_features_button.setEnabled(False)
+            self.export_features_button.setToolTip("Mordred 未安装，无法导出描述符特征")
+
         delete_button = QPushButton("删除选中分子")
         delete_button.clicked.connect(self._delete_selected_molecule)
 
@@ -69,6 +87,7 @@ class DataPage(BasePage):
         control_layout.addWidget(self.search_input, stretch=1)
         control_layout.addWidget(import_button)
         control_layout.addWidget(refresh_button)
+        control_layout.addWidget(self.export_features_button)
         control_layout.addWidget(delete_button)
 
         splitter = QSplitter()
@@ -138,10 +157,10 @@ class DataPage(BasePage):
 
     def refresh_page(self) -> None:
         search_text = self.search_input.text().strip() if hasattr(self, "search_input") else ""
-        self.dataset = self.db_manager.get_wide_dataset(search_text=search_text, include_mordred=False)
+        self.dataset = self.molecule_repository.get_wide_dataset(search_text=search_text, include_mordred=False)
         self.dataset_model.set_dataframe(self.dataset)
         self.table_view.resizeColumnsToContents()
-        descriptor_molecule_count = self.db_manager.count_rows("molecule_descriptors")
+        descriptor_molecule_count = self.molecule_repository.count_descriptor_rows()
         self.status_label.setText(
             f"当前记录数: {len(self.dataset)} | "
             f"数值列: {len(self.dataset.select_dtypes(include='number').columns)} | "
@@ -160,7 +179,8 @@ class DataPage(BasePage):
             return
         try:
             result = self.data_import_service.import_file(file_path)
-        except Exception as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.exception("Failed to import data file: %s", file_path)
             QMessageBox.critical(self, "导入失败", str(exc))
             return
 
@@ -170,6 +190,62 @@ class DataPage(BasePage):
             "导入完成",
             f"已导入 {result['row_count']} 条记录。\n来源文件: {Path(file_path).name}",
         )
+
+    def _export_features_csv(self) -> None:
+        if not is_mordred_available():
+            QMessageBox.information(self, "无法导出", "Mordred 未安装，无法导出描述符特征。")
+            return
+
+        default_path = self._default_feature_export_path()
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "导出 Mordred 特征 CSV",
+            str(default_path),
+            "CSV Files (*.csv)",
+        )
+        if not file_path:
+            return
+
+        destination = Path(file_path)
+        if destination.suffix.lower() != ".csv":
+            destination = destination.with_suffix(".csv")
+
+        search_text = self.search_input.text().strip() if hasattr(self, "search_input") else ""
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            row_count, column_count = self._write_features_csv(destination, search_text)
+            if row_count == 0 or column_count == 0:
+                QMessageBox.information(
+                    self,
+                    "没有可导出的特征",
+                    "当前没有可导出的特征数据，请先导入分子并计算描述符。",
+                )
+                return
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.exception("Failed to export Mordred feature CSV: %s", destination)
+            QMessageBox.critical(self, "导出失败", str(exc))
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        self.status_label.setText(
+            f"已导出 {row_count} 行 × {column_count} 列特征数据到 {destination}"
+        )
+
+    def _write_features_csv(self, destination: Path, search_text: str) -> tuple[int, int]:
+        """Write the current filtered Mordred wide table and return its shape."""
+        export_frame = self.molecule_repository.get_wide_dataset(search_text=search_text, include_mordred=True)
+        if export_frame.empty or self.molecule_repository.count_descriptor_rows() == 0:
+            return 0, 0
+        export_frame.to_csv(destination, index=False, encoding="utf-8-sig")
+        return int(len(export_frame)), int(len(export_frame.columns))
+
+    def _default_feature_export_path(self) -> Path:
+        export_dir = Path.home() / "Desktop"
+        if not export_dir.exists():
+            export_dir = Path.home()
+        date_label = datetime.now().strftime("%Y-%m-%d")
+        return export_dir / f"mordred_features_{date_label}.csv"
 
     def _delete_selected_molecule(self) -> None:
         if self.dataset.empty:
@@ -184,7 +260,7 @@ class DataPage(BasePage):
         if confirmed != QMessageBox.StandardButton.Yes:
             return
 
-        self.db_manager.delete_molecule(molecule_id)
+        self.molecule_repository.delete_molecule(molecule_id)
         self.refresh_page()
 
     def _sync_table_selection(self) -> None:

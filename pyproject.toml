@@ -22,7 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 boost = ["xgboost>=2.1"]
-dev = ["pytest>=8.0"]
+dev = ["pre-commit>=3.0", "pytest>=8.0", "pytest-cov>=5.0", "pytest-qt>=4.0"]
 
 [project.scripts]
 chemstudio = "chemstudio.app:main"

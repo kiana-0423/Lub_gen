@@ -86,6 +86,13 @@ pip install rdkit
 pip install xgboost
 ```
 
+开发环境建议安装开发依赖并启用 pre-commit：
+
+```bash
+pip install -e ".[dev]"
+pre-commit install
+```
+
 ## 运行
 
 ```bash

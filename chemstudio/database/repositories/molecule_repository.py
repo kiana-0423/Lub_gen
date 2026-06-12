@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
+import pandas as pd
+
 from chemstudio.database.db_manager import DatabaseManager
+from chemstudio.database.repositories.descriptor_repository import DescriptorRepository
 
 
 class MoleculeRepository:
@@ -10,6 +13,7 @@ class MoleculeRepository:
 
     def __init__(self, db_manager: DatabaseManager) -> None:
         self.db_manager = db_manager
+        self.descriptor_repository = DescriptorRepository(db_manager)
 
     def save_molecule(self, payload: Mapping[str, object], molecule_id: int | None = None) -> dict[str, object]:
         return self.db_manager.save_molecule(dict(payload), molecule_id=molecule_id)
@@ -70,4 +74,16 @@ class MoleculeRepository:
         return items
 
     def save_descriptors(self, molecule_id: int, descriptors: Mapping[str, object]) -> None:
-        self.db_manager.save_descriptors(molecule_id, dict(descriptors))
+        self.descriptor_repository.save_descriptors(molecule_id, dict(descriptors))
+
+    def get_wide_dataset(self, search_text: str = "", *, include_mordred: bool = False) -> pd.DataFrame:
+        return self.descriptor_repository.get_wide_dataset(search_text=search_text, include_mordred=include_mordred)
+
+    def count_descriptor_rows(self) -> int:
+        return self.db_manager.count_rows("molecule_descriptors")
+
+    def list_feature_names(self) -> list[str]:
+        return self.descriptor_repository.list_feature_names()
+
+    def list_catalog(self) -> list[dict[str, object]]:
+        return self.db_manager.list_molecules()

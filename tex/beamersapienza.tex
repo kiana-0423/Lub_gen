@@ -1,0 +1,1003 @@
+% Compile with XeLaTeX.
+\documentclass[aspectratio=169,11pt]{beamer}
+
+\usepackage{amsmath}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{fontspec}
+\usepackage{tabularx}
+\usepackage{tikz}
+\usepackage{xcolor}
+\usepackage{xeCJK}
+\usetikzlibrary{arrows.meta}
+
+\IfFontExistsTF{PingFang SC}{
+  \setCJKmainfont{PingFang SC}
+}{
+  \IfFontExistsTF{Noto Sans CJK SC}{
+    \setCJKmainfont{Noto Sans CJK SC}
+  }{
+    \IfFontExistsTF{Songti SC}{\setCJKmainfont{Songti SC}}{}
+  }
+}
+
+\usetheme{Madrid}
+\usefonttheme{professionalfonts}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
+
+\definecolor{ChemBlue}{HTML}{0B3D91}
+\definecolor{ChemTeal}{HTML}{00897B}
+\definecolor{ChemGreen}{HTML}{2E7D32}
+\definecolor{ChemOrange}{HTML}{EF6C00}
+\definecolor{ChemRed}{HTML}{B71C1C}
+\definecolor{ChemGray}{HTML}{455A64}
+\definecolor{ChemLight}{HTML}{EEF5F8}
+
+\setbeamercolor{structure}{fg=ChemBlue}
+\setbeamercolor{frametitle}{fg=white,bg=ChemBlue}
+\setbeamercolor{title}{fg=white,bg=ChemBlue}
+\setbeamercolor{block title}{fg=white,bg=ChemTeal}
+\setbeamercolor{block body}{bg=ChemLight}
+\setbeamercolor{alerted text}{fg=ChemOrange}
+\setbeamertemplate{blocks}[rounded][shadow=false]
+\setbeamerfont{block title}{size=\normalsize,series=\bfseries}
+\setbeamerfont{block body}{size=\small}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=ChemBlue,
+  urlcolor=ChemTeal
+}
+
+\newcommand{\code}[1]{\texttt{\detokenize{#1}}}
+\newcommand{\file}[1]{{\scriptsize\texttt{\detokenize{#1}}}}
+\newcommand{\kw}[1]{\textcolor{ChemBlue}{\textbf{#1}}}
+\newcommand{\ok}[1]{\textcolor{ChemGreen}{#1}}
+\newcommand{\warn}[1]{\textcolor{ChemOrange}{#1}}
+\newcommand{\bad}[1]{\textcolor{ChemRed}{#1}}
+
+\newenvironment{templatebox}[1]{%
+  \begin{beamerboxesrounded}[upper=block title,lower=block body,shadow=false]{#1}%
+  \small
+}{%
+  \end{beamerboxesrounded}%
+}
+
+\title[ChemStudio]{ChemStudio 项目介绍}
+\subtitle{面向化学与材料数据管理、分子设计、配方设计和性能预测的桌面软件}
+\author{ChemStudio Project}
+\institute{Python + PySide6 + SQLite + RDKit/Mordred + scikit-learn}
+\date{2026 年 6 月}
+
+\AtBeginSection[]{
+  \begin{frame}{目录进度}
+    \tableofcontents[currentsection]
+  \end{frame}
+}
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+\end{frame}
+
+\begin{frame}{报告结构}
+  \tableofcontents
+\end{frame}
+
+\section{项目背景与定位}
+
+\begin{frame}{一句话定位}
+  \begin{templatebox}{ChemStudio 是什么}
+    ChemStudio 是一个面向材料和化学研发场景的桌面端 MVP，帮助用户完成数据导入、分子描述符生成、机器学习建模、单分子预测和配方性能预测。
+  \end{templatebox}
+
+  \vspace{0.4cm}
+  \begin{columns}
+    \begin{column}{0.32\textwidth}
+      \begin{templatebox}{数据}
+        CSV、Excel、JSON 导入，统一写入 SQLite。
+      \end{templatebox}
+    \end{column}
+    \begin{column}{0.32\textwidth}
+      \begin{templatebox}{特征}
+        RDKit 基础特征与 Mordred 1800+ 描述符。
+      \end{templatebox}
+    \end{column}
+    \begin{column}{0.32\textwidth}
+      \begin{templatebox}{建模}
+        回归、分类、交叉验证、调参、模型保存与预测。
+      \end{templatebox}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{研发场景中的常见痛点}
+  \begin{itemize}
+    \item 化学和材料数据通常分散在 Excel、CSV、历史实验记录和脚本输出中。
+    \item 分子结构、工艺参数、实验性能、描述符特征常常没有统一的数据模型。
+    \item 小样本、高维描述符是常态，直接建模容易出现过拟合。
+    \item 描述符计算、数据清洗、训练、预测分散在多个脚本里，复现成本高。
+    \item 非算法背景用户需要可视化界面，而不是每次都写 Python 代码。
+    \item 配方设计不仅关心单个分子，还关心多组分比例对整体性能的影响。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{目标用户}
+  \begin{columns}
+    \begin{column}{0.48\textwidth}
+      \begin{templatebox}{实验与材料研发人员}
+        \begin{itemize}
+          \item 导入实验数据。
+          \item 浏览、检索、清洗分子记录。
+          \item 快速比较不同目标性能。
+          \item 使用训练好的模型做候选分子预测。
+        \end{itemize}
+      \end{templatebox}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{templatebox}{算法与数据科学人员}
+        \begin{itemize}
+          \item 统一管理结构化数据。
+          \item 复用描述符与特征选择流程。
+          \item 保存可追溯模型 artifact。
+          \item 在桌面界面中交付建模能力。
+        \end{itemize}
+      \end{templatebox}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{项目要解决的核心问题}
+  \begin{enumerate}
+    \item \kw{数据入口统一}：把表格文件、分子结构、属性列、特征列写入同一套数据库。
+    \item \kw{描述符自动生成}：基于 SMILES 自动生成 RDKit 和 Mordred 特征。
+    \item \kw{高维特征筛选}：面对 1800+ Mordred 描述符，降低冗余和过拟合。
+    \item \kw{低门槛训练预测}：用户通过 UI 选择目标列和模型即可训练。
+    \item \kw{配方扩展能力}：从单分子预测扩展到多组分配方预测。
+    \item \kw{工程可维护性}：分层架构、Repository、Service、测试和日志支撑持续迭代。
+  \end{enumerate}
+\end{frame}
+
+\begin{frame}{ChemStudio 的产品闭环}
+  \begin{center}
+    \begin{tikzpicture}[
+      box/.style={
+        draw=ChemBlue,
+        fill=ChemLight,
+        rounded corners=2pt,
+        minimum width=2.45cm,
+        minimum height=0.82cm,
+        align=center,
+        font=\small\bfseries
+      },
+      arrow/.style={-{Stealth[length=2.2mm]}, thick, color=ChemGray}
+    ]
+      \node[box] (import) at (-4.8, 0.85) {导入数据};
+      \node[box] (feature) at (-1.6, 0.85) {生成描述符};
+      \node[box] (select) at (1.6, 0.85) {特征筛选};
+      \node[box] (train) at (4.8, 0.85) {训练模型};
+      \node[box] (predict) at (4.8, -0.75) {分子预测};
+      \node[box] (formula) at (1.6, -0.75) {配方预测};
+      \node[box] (save) at (-1.6, -0.75) {保存记录};
+      \draw[arrow] (import) -- (feature);
+      \draw[arrow] (feature) -- (select);
+      \draw[arrow] (select) -- (train);
+      \draw[arrow] (train) -- (predict);
+      \draw[arrow] (predict) -- (formula);
+      \draw[arrow] (formula) -- (save);
+    \end{tikzpicture}
+  \end{center}
+
+  \vspace{0.3cm}
+  \begin{itemize}
+    \item 这个闭环覆盖了从原始数据到模型应用的最短路径。
+    \item MVP 已经具备可运行桌面应用、样例数据、数据库持久化和模型 artifact 保存。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{当前版本能力边界}
+  \begin{columns}
+    \begin{column}{0.48\textwidth}
+      \begin{templatebox}{已经具备}
+        \begin{itemize}
+          \item 多页面 PySide6 桌面应用。
+          \item SQLite 本地数据库。
+          \item RDKit 与 Mordred 描述符。
+          \item 回归与分类模型训练。
+          \item 特征选择全流程。
+          \item 分子与配方预测。
+          \item 基础可视化和 CSV 导出。
+        \end{itemize}
+      \end{templatebox}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{templatebox}{预留扩展}
+        \begin{itemize}
+          \item 更复杂配方特征工程。
+          \item 更丰富模型库。
+          \item 远程数据库或团队协作。
+          \item 主动学习与候选分子推荐。
+          \item 更细粒度权限和审计。
+        \end{itemize}
+      \end{templatebox}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\section{技术栈与系统架构}
+
+\begin{frame}{总体技术栈}
+  \begin{table}
+    \small
+    \begin{tabularx}{\textwidth}{>{\bfseries}p{0.18\textwidth}X}
+      \toprule
+      层次 & 技术与作用 \\
+      \midrule
+      桌面 UI & PySide6、Qt Widgets、QThread、QProgressBar \\
+      数据处理 & pandas、numpy、openpyxl、JSON/CSV/Excel 解析 \\
+      化学信息学 & RDKit、Mordred、SMILES 标准化、分子描述符 \\
+      机器学习 & scikit-learn、RandomForest、SVR、KNN、LogisticRegression、joblib \\
+      可视化 & matplotlib、Qt 嵌入式画布 \\
+      持久化 & SQLite、本地资源目录、模型 joblib artifact \\
+      工程质量 & pytest、pytest-qt、pre-commit、GitHub Actions \\
+      \bottomrule
+    \end{tabularx}
+  \end{table}
+\end{frame}
+
+\begin{frame}{分层架构}
+  \begin{center}
+    \begin{tabular}{c}
+      \fcolorbox{ChemBlue}{ChemLight}{\parbox{0.82\textwidth}{\centering UI 层：HomePage / DataPage / MoleculeDesignPage / FormulaDesignPage}} \\
+      $\downarrow$ \\
+      \fcolorbox{ChemTeal}{ChemLight}{\parbox{0.82\textwidth}{\centering Service 层：DataImportService / FeatureService / ModelService / FormulaService / VisualizationService}} \\
+      $\downarrow$ \\
+      \fcolorbox{ChemGreen}{ChemLight}{\parbox{0.82\textwidth}{\centering 领域能力：ML 模型、特征选择、描述符计算、校验、预测}} \\
+      $\downarrow$ \\
+      \fcolorbox{ChemOrange}{ChemLight}{\parbox{0.82\textwidth}{\centering 数据访问：DatabaseManager + Repository}} \\
+      $\downarrow$ \\
+      \fcolorbox{ChemGray}{ChemLight}{\parbox{0.82\textwidth}{\centering SQLite、CSV、Excel、JSON、joblib 模型文件}} \\
+    \end{tabular}
+  \end{center}
+\end{frame}
+
+\begin{frame}{目录结构总览}
+  \begin{table}
+    \scriptsize
+    \begin{tabularx}{\textwidth}{p{0.27\textwidth}X}
+      \toprule
+      目录或文件 & 职责 \\
+      \midrule
+      \file{app.py} & 项目根入口，启动 ChemStudio。 \\
+      \file{chemstudio/app.py} & 应用级启动逻辑，初始化数据库和主窗口。 \\
+      \file{chemstudio/ui/} & 所有页面、主窗口、通用 Qt 组件。 \\
+      \file{chemstudio/services/} & 业务编排层，隔离 UI 与底层实现。 \\
+      \file{chemstudio/database/} & SQLite 连接、Schema、Repository、数据模型。 \\
+      \file{chemstudio/ml/} & 模型目录、训练、预测、指标、特征选择。 \\
+      \file{chemstudio/validation/} & SMILES、分子名、配比、目标列、特征列校验。 \\
+      \file{chemstudio/utils/} & 配置、文件读写、日志工具。 \\
+      \file{chemstudio/tests/} & 单元测试与 UI 测试。 \\
+      \file{examples/} & 示例导入数据。 \\
+      \bottomrule
+    \end{tabularx}
+  \end{table}
+\end{frame}
+
+\begin{frame}{模块依赖方向}
+  \begin{itemize}
+    \item \kw{UI} 只负责页面交互、控件状态和用户反馈。
+    \item \kw{Service} 负责完整业务流程，例如导入、训练、预测、配方保存。
+    \item \kw{ML} 负责模型创建、训练、评估、预测和特征筛选。
+    \item \kw{Repository} 负责实体级数据库读写，避免 UI 直接拼 SQL。
+    \item \kw{DatabaseManager} 聚焦连接管理、Schema 迁移和兼容入口。
+    \item \kw{Validation} 作为统一入口，避免校验逻辑散落在 UI 和数据库层。
+  \end{itemize}
+
+  \vspace{0.2cm}
+  \begin{templatebox}{设计原则}
+    高层模块依赖抽象业务能力，底层模块负责细节；测试可以更容易替换 Repository 或 Service。
+  \end{templatebox}
+\end{frame}
+
+\begin{frame}{启动流程}
+  \begin{enumerate}
+    \item 用户执行 \code{python app.py} 或 \code{python -m chemstudio}。
+    \item 应用读取配置，确定 SQLite 数据库路径和资源目录。
+    \item \code{DatabaseManager.initialize()} 创建或迁移表结构。
+    \item 首次启动时自动导入 \file{chemstudio/resources/mock_materials.csv}。
+    \item \code{MainWindow} 创建 Repository 与 Service。
+    \item 三个核心页面被加入 QTabWidget，进入可交互状态。
+  \end{enumerate}
+\end{frame}
+
+\begin{frame}{主窗口中的依赖注入}
+  \begin{itemize}
+    \item \file{chemstudio/ui/main_window.py} 是 UI 层依赖装配中心。
+    \item 主窗口创建 \code{MoleculeRepository}、\code{DescriptorRepository}、\code{ModelRepository}、\code{FormulaRepository}。
+    \item \code{FeatureService}、\code{ModelService}、\code{FormulaService} 接收对应 Repository。
+    \item 页面接收 Service 和 Repository，而不是自行创建所有依赖。
+    \item 这样页面更轻、更容易测试，也更方便未来替换数据源。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{为什么采用本地 SQLite}
+  \begin{columns}
+    \begin{column}{0.48\textwidth}
+      \begin{templatebox}{适合 MVP}
+        \begin{itemize}
+          \item 零部署，文件即数据库。
+          \item 和桌面应用天然匹配。
+          \item 便于打包、备份和迁移。
+          \item pandas 读写友好。
+        \end{itemize}
+      \end{templatebox}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{templatebox}{已做增强}
+        \begin{itemize}
+          \item 外键约束。
+          \item WAL 日志模式。
+          \item busy timeout。
+          \item sort 字段 allowlist。
+          \item 连接自动关闭。
+        \end{itemize}
+      \end{templatebox}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Schema 的核心实体}
+  \begin{table}
+    \small
+    \begin{tabularx}{\textwidth}{p{0.22\textwidth}X}
+      \toprule
+      实体 & 说明 \\
+      \midrule
+      \code{molecules} & 分子主表，保存名称、SMILES、来源、隐藏状态、结构元信息。 \\
+      \code{molecular_features} & 普通数值特征，来自导入文件或后续计算。 \\
+      \code{molecule_descriptors} & Mordred/RDKit 描述符，特征列多且稀疏。 \\
+      \code{property_data} & 目标性能或标签列。 \\
+      \code{models} & 模型记录和 artifact 元信息。 \\
+      \code{formulations} & 多组分配方记录。 \\
+      \code{predictions} & 预测结果记录。 \\
+      \bottomrule
+    \end{tabularx}
+  \end{table}
+\end{frame}
+
+\begin{frame}{Repository 拆分}
+  \begin{table}
+    \scriptsize
+    \begin{tabularx}{\textwidth}{p{0.32\textwidth}X}
+      \toprule
+      Repository & 负责的方法 \\
+      \midrule
+      \file{molecule_repository.py} & 分子列表、删除、目录读取、宽表代理、描述符代理。 \\
+      \file{descriptor_repository.py} & 保存描述符、列出特征名和属性名、构建宽表数据集。 \\
+      \file{model_repository.py} & 保存模型训练记录、列出模型记录。 \\
+      \file{formula_repository.py} & 保存配方、列出配方、读取配方详情、删除配方。 \\
+      \file{prediction_repository.py} & 保存预测记录。 \\
+      \bottomrule
+    \end{tabularx}
+  \end{table}
+
+  \vspace{0.2cm}
+  \begin{templatebox}{当前策略}
+    新 UI 和 Service 路径优先使用 Repository；\code{DatabaseManager} 中的旧方法保留为兼容入口。
+  \end{templatebox}
+\end{frame}
+
+\begin{frame}{数据模型}
+  \begin{itemize}
+    \item \code{MoleculeImportRecord}：导入阶段的标准化数据结构，包含结构信息、特征、属性、描述符。
+    \item \code{MoleculeDetail}：分子详情视图，适合 UI 展示。
+    \item \code{FormulaRecord}：配方记录，包括组分、比例和预测结果。
+    \item \code{ModelRecord}：模型训练记录和文件路径。
+    \item \code{ModelArtifactSummary}：模型 artifact 的摘要信息。
+  \end{itemize}
+
+  \vspace{0.2cm}
+  \begin{templatebox}{收益}
+    dataclass 让跨层传递的数据更清晰，也减少了字典字段拼写错误。
+  \end{templatebox}
+\end{frame}
+
+\section{数据导入、可视化与导出}
+
+\begin{frame}{数据导入服务}
+  \begin{itemize}
+    \item 核心文件：\file{chemstudio/services/data_import_service.py}。
+    \item 支持格式：CSV、Excel、JSON。
+    \item 自动识别名称列、SMILES 列、来源列。
+    \item 根据列名前缀和关键词区分特征列与属性列。
+    \item 支持 \code{parameter:} 前缀，把工艺参数写入 parameters。
+    \item 调用验证层标准化 SMILES 和分子名称。
+    \item 导入后批量写入 SQLite。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{列识别规则}
+  \begin{table}
+    \small
+    \begin{tabularx}{\textwidth}{p{0.25\textwidth}X}
+      \toprule
+      列类型 & 识别方式 \\
+      \midrule
+      分子名称 & \code{name}、\code{molecule_name}、\code{material_name}、\code{compound_name}。 \\
+      结构字段 & \code{smiles}、\code{structure}、\code{canonical_smiles}。 \\
+      来源字段 & \code{source}、\code{dataset}、\code{origin}。 \\
+      特征字段 & \code{feature_}、\code{feat_}、\code{descriptor_} 前缀，或普通数值列。 \\
+      属性字段 & \code{property_}、\code{target_}、\code{label_} 前缀，或 conductivity、viscosity 等关键词。 \\
+      工艺参数 & \code{parameter:} 前缀。 \\
+      \bottomrule
+    \end{tabularx}
+  \end{table}
+\end{frame}
+
+\begin{frame}{SMILES 标准化}
+  \begin{itemize}
+    \item 核心校验函数：\code{validate_smiles(smiles)}。
+    \item 当 RDKit 可用时，使用 \code{Chem.MolFromSmiles} 解析结构。
+    \item 输出 canonical SMILES，减少同一分子的重复表达。
+    \item 同时计算分子式、分子量、InChI、InChIKey、MolBlock。
+    \item 当输入为空或无法解析时抛出明确错误。
+    \item 这样数据进入数据库前已经完成第一道质量控制。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Mordred 描述符计算}
+  \begin{itemize}
+    \item 核心文件：\file{chemstudio/ml/featurizers/mordred_featurizer.py}。
+    \item Mordred 可以为单个分子生成 1800+ 个描述符。
+    \item 计算器使用缓存，避免每次重复构造 descriptor calculator。
+    \item 描述符结果转换为 Python float，无法转换的值记为缺失。
+    \item 依赖检查通过 \code{is_mordred_available()} 暴露给 UI。
+    \item 在 DataPage 中，如果 Mordred 不可用，导出特征按钮会被禁用。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{批量描述符并行优化}
+  \begin{itemize}
+    \item 导入服务提供 \code{_compute_descriptors_batch()}。
+    \item 小批量数据走串行路径，降低并行调度开销。
+    \item 大批量数据使用 joblib \code{Parallel} 和 \code{delayed}。
+    \item 当前采用线程优先策略，适合与 RDKit/Mordred 的 C++ 内部计算配合。
+    \item 并行异常会有日志记录，并回退到安全路径。
+    \item 目标是让 1800+ 描述符在批量导入时不再成为明显卡点。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{DataPage 页面能力}
+  \begin{itemize}
+    \item 文件位置：\file{chemstudio/ui/data_page.py}。
+    \item 提供导入文件、刷新、导出特征 CSV、删除记录等操作。
+    \item 使用 \code{PandasTableModel} 展示宽表数据。
+    \item 支持搜索框过滤当前数据。
+    \item 页面下方展示分布图、散点图、缺失值统计。
+    \item 所有数据读取通过 \code{MoleculeRepository} 完成。
+    \item 适合用户在进入建模前先观察数据质量。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{可视化服务}
+  \begin{itemize}
+    \item 核心文件：\file{chemstudio/services/visualization_service.py}。
+    \item 将绘图逻辑从 UI 控件中拆出，便于单独测试。
+    \item 支持分布图，用于观察单个数值列的分布。
+    \item 支持散点图，用于观察两个数值列的关系。
+    \item 支持缺失值统计，帮助发现描述符计算失败或数据录入问题。
+    \item 基于 matplotlib，与 Qt 画布集成。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{导出 Mordred 特征 CSV}
+  \begin{itemize}
+    \item 按钮位于 DataPage 控制栏，文案为“导出特征 CSV”。
+    \item 数据来源是 \code{get_wide_dataset(include_mordred=True)}。
+    \item 导出尊重搜索框筛选结果，方便用户先过滤再导出。
+    \item 默认文件名包含日期，减少覆盖风险。
+    \item 使用 \code{encoding="utf-8-sig"}，方便中文 Windows Excel 直接打开。
+    \item 空数据或无描述符时会弹出友好提示。
+    \item 导出成功后在状态栏显示行数、列数和保存路径。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{宽表数据集}
+  \begin{templatebox}{为什么需要宽表}
+    模型训练通常需要一行一个分子、一列一个特征或目标。因此数据库中的长表特征需要 pivot 成宽表。
+  \end{templatebox}
+
+  \begin{itemize}
+    \item \code{DescriptorRepository.get_wide_dataset()} 负责构建宽表。
+    \item 元数据列在前：id、name、smiles、source、created\_at。
+    \item 普通特征、属性列和 Mordred 描述符拼接在同一 DataFrame。
+    \item DataPage、ModelService、导出功能都复用这一路径。
+  \end{itemize}
+\end{frame}
+
+\section{特征工程与机器学习}
+
+\begin{frame}{FeatureService 的职责}
+  \begin{itemize}
+    \item 核心文件：\file{chemstudio/services/feature_service.py}。
+    \item 判断哪些列可以作为模型输入特征。
+    \item 排除目标列、元数据列、属性列和不可用列。
+    \item 保存单个分子的描述符结果。
+    \item 调用 \code{FeatureSelector} 执行特征筛选。
+    \item 对 UI 暴露稳定接口，让页面不直接接触特征筛选细节。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{为什么必须做特征选择}
+  \begin{itemize}
+    \item Mordred 生成 1800+ 个描述符，而实验样本可能只有几十到几百。
+    \item 特征数远大于样本数时，模型很容易记住噪声。
+    \item 描述符之间存在强相关，例如不同定义的分子大小、质量、拓扑指标。
+    \item 部分描述符在当前数据集里几乎不变，没有预测价值。
+    \item 缺失率高的描述符会让训练和预测更不稳定。
+    \item 特征筛选可以提升速度、降低过拟合，并提高解释性。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{特征选择策略}
+  \begin{table}
+    \scriptsize
+    \begin{tabularx}{\textwidth}{p{0.22\textwidth}X}
+      \toprule
+      策略 & 执行阶段 \\
+      \midrule
+      \code{none} & 不筛选，保留所有候选特征。 \\
+      \code{variance} & 方差过滤 + 缺失值过滤。 \\
+      \code{correlation} & 方差过滤 + 缺失值过滤 + 共线性过滤。 \\
+      \code{univariate} & 在去冗余后执行互信息单变量筛选。 \\
+      \code{model_based} & 在去冗余后使用随机森林重要性筛选。 \\
+      \code{full} & 方差、缺失、共线性、互信息、模型驱动完整流程。 \\
+      \bottomrule
+    \end{tabularx}
+  \end{table}
+\end{frame}
+
+\begin{frame}{五阶段筛选流程}
+  \begin{enumerate}
+    \item \kw{方差过滤}：移除几乎不变化的特征。
+    \item \kw{缺失值过滤}：丢弃缺失率过高的列。
+    \item \kw{共线性过滤}：移除相关系数高于阈值的冗余特征。
+    \item \kw{单变量筛选}：回归使用 \code{mutual_info_regression}，分类使用 \code{mutual_info_classif}。
+    \item \kw{模型驱动筛选}：随机森林估计特征重要性，做最终精选。
+  \end{enumerate}
+
+  \vspace{0.2cm}
+  \begin{templatebox}{目标}
+    将 1800+ 个 Mordred 描述符压缩到几十到一百多个高质量特征。
+  \end{templatebox}
+\end{frame}
+
+\begin{frame}{受保护的化学直觉特征}
+  \begin{itemize}
+    \item \code{mol_wt}：分子量。
+    \item \code{mol_logp}：脂水分配相关性质。
+    \item \code{tpsa}：拓扑极性表面积。
+    \item \code{h_donors} 与 \code{h_acceptors}：氢键供体和受体。
+    \item \code{rotatable_bonds}：可旋转键数量。
+    \item \code{ring_count}：环数量。
+    \item \code{fraction_csp3}：sp3 碳比例。
+  \end{itemize}
+
+  \begin{templatebox}{设计理由}
+    这些特征具有明确化学意义，即使统计筛选中暂时不占优，也应尽量保留。
+  \end{templatebox}
+\end{frame}
+
+\begin{frame}{特征筛选报告}
+  \begin{itemize}
+    \item \code{FeatureSelectionReport} 记录策略、问题类型、初始特征数、最终特征数。
+    \item \code{FeatureSelectionStage} 记录每一步筛选前后数量。
+    \item 报告包含被移除的特征列表，便于追溯。
+    \item 缓存命中的阶段通过 \code{from_cache} 标识。
+    \item 模型 artifact 中保存该报告，训练完成后 UI 可以展示。
+  \end{itemize}
+
+  \vspace{0.2cm}
+  \begin{templatebox}{意义}
+    用户不仅知道模型用了哪些特征，也能知道为什么其他特征被去掉。
+  \end{templatebox}
+\end{frame}
+
+\begin{frame}{特征选择缓存}
+  \begin{itemize}
+    \item \code{FeatureSelector} 内部维护 \code{_cache} 字典。
+    \item 方差过滤和缺失值过滤可以复用中间结果。
+    \item 当用户在 UI 中反复切换筛选策略时，前置阶段不必重复计算。
+    \item 缓存 key 基于输入数据和阶段名称生成。
+    \item 提供 \code{clear_cache()} 便于测试或强制刷新。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{模型目录}
+  \begin{itemize}
+    \item 核心文件：\file{chemstudio/ml/model_catalog.py}。
+    \item 统一维护模型 key、展示名、问题类型和创建函数。
+    \item 回归模型与分类模型分别创建。
+    \item 如果用户选择的模型不可用，抛出明确错误。
+    \item 可选 XGBoost 采用兼容式依赖，不安装也不影响主流程。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{当前支持的模型能力}
+  \begin{columns}
+    \begin{column}{0.48\textwidth}
+      \begin{templatebox}{回归}
+        \begin{itemize}
+          \item Random Forest Regressor。
+          \item Ridge / Lasso / ElasticNet。
+          \item SVR。
+          \item KNN Regressor。
+          \item 可选 XGBoost Regressor。
+        \end{itemize}
+      \end{templatebox}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{templatebox}{分类}
+        \begin{itemize}
+          \item Random Forest Classifier。
+          \item Logistic Regression。
+          \item SVC。
+          \item KNN Classifier。
+          \item 可选 XGBoost Classifier。
+        \end{itemize}
+      \end{templatebox}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{问题类型推断}
+  \begin{itemize}
+    \item \code{ModelService.infer_problem_type()} 根据目标列自动判断。
+    \item 如果目标列是少量整数类别，推断为分类任务。
+    \item 其他情况默认作为回归任务。
+    \item 分类任务使用分类模型、分类指标和分类版互信息筛选。
+    \item 回归任务使用回归模型、$R^2$、MAE、RMSE 等指标。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{训练流程}
+  \begin{enumerate}
+    \item \code{ModelService} 从 \code{DescriptorRepository} 读取宽表数据。
+    \item 校验目标列是否存在且可训练。
+    \item \code{FeatureService} 推断候选特征列。
+    \item 根据 UI 选择执行特征筛选。
+    \item 根据问题类型选择回归或分类训练函数。
+    \item 训练函数完成 train-test split、模型拟合和指标计算。
+    \item 返回 artifact，包含模型、特征名、目标名、指标和报告。
+  \end{enumerate}
+\end{frame}
+
+\begin{frame}{交叉验证与超参数搜索}
+  \begin{itemize}
+    \item \file{chemstudio/ml/cross_validation.py} 提供交叉验证能力。
+    \item \file{chemstudio/ml/hyperparameter_search.py} 提供网格搜索和随机搜索。
+    \item 分类任务自动考虑类别数量，避免折数超过少数类样本数。
+    \item UI 中可以开启交叉验证和超参数搜索。
+    \item 搜索结果会写入模型 artifact，便于后续比较。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{训练指标}
+  \begin{columns}
+    \begin{column}{0.48\textwidth}
+      \begin{templatebox}{回归指标}
+        \begin{itemize}
+          \item $R^2$：拟合解释度。
+          \item MAE：平均绝对误差。
+          \item RMSE：均方根误差。
+        \end{itemize}
+      \end{templatebox}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{templatebox}{分类指标}
+        \begin{itemize}
+          \item Accuracy。
+          \item Precision / Recall / F1。
+          \item Confusion Matrix。
+          \item Classification Report。
+        \end{itemize}
+      \end{templatebox}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{模型 artifact}
+  \begin{itemize}
+    \item 使用 joblib 保存模型字典。
+    \item artifact 包含训练好的 pipeline 或 estimator。
+    \item 保存 \code{feature_names}，预测时严格按同一列顺序取值。
+    \item 保存 \code{target_name}、\code{model_key}、\code{model_name}。
+    \item 保存 \code{problem_type} 和训练指标。
+    \item 保存 \code{feature_selection_report}。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{模型加载安全性}
+  \begin{itemize}
+    \item joblib 基于 pickle，加载未知文件有安全风险。
+    \item \code{ModelService.load_model()} 要求调用者显式传入 \code{trusted_source=True}。
+    \item 只允许加载 \code{.joblib} 后缀文件。
+    \item 加载后检查 artifact 是否为字典。
+    \item 检查必须字段：model、model\_name、model\_key、target\_name、feature\_names。
+    \item UI 会提示用户确认模型文件来源可信。
+  \end{itemize}
+\end{frame}
+
+\section{桌面 UI 与业务页面}
+
+\begin{frame}{UI 总览}
+  \begin{itemize}
+    \item UI 基于 PySide6 Widgets。
+    \item 主窗口使用 tab 式导航：首页、数据导入与可视化、分子设计、配方设计。
+    \item 通用页面基类在 \file{chemstudio/ui/widgets/base_page.py}。
+    \item 表格模型在 \file{chemstudio/ui/widgets/pandas_table_model.py}。
+    \item Matplotlib 画布在 \file{chemstudio/ui/widgets/matplotlib_canvas.py}。
+    \item 页面不直接拼 SQL，改由 Repository 和 Service 提供数据。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{HomePage}
+  \begin{itemize}
+    \item 文件位置：\file{chemstudio/ui/home_page.py}。
+    \item 作为应用首页，说明软件定位。
+    \item 提供数据导入、分子设计、配方设计三个入口。
+    \item 帮助用户理解从数据到建模再到配方预测的流程。
+    \item 页面逻辑较轻，主要承担导航与产品说明。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{MoleculeDesignPage}
+  \begin{itemize}
+    \item 文件位置：\file{chemstudio/ui/molecule_design_page.py}。
+    \item 读取训练数据集和候选目标列。
+    \item 提供模型选择、测试集比例、交叉验证、调参等控件。
+    \item 提供特征筛选策略下拉框和最大特征数输入框。
+    \item 训练后展示指标、散点图和特征筛选报告。
+    \item 支持保存模型、加载模型和单分子预测。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{分子设计页面的训练异步化}
+  \begin{itemize}
+    \item \code{ModelTrainingWorker} 运行在 \code{QThread} 中。
+    \item 点击开始训练后禁用相关按钮，避免重复提交。
+    \item 页面显示进度条和忙碌状态。
+    \item 训练完成后通过 signal 回到主线程更新 UI。
+    \item 训练失败时显示错误对话框并恢复控件状态。
+    \item 这样大数据集和 Mordred 特征选择不会直接卡死界面。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{单分子预测}
+  \begin{itemize}
+    \item 用户输入 SMILES。
+    \item 系统调用特征服务计算当前分子的描述符。
+    \item 根据模型 artifact 中的 \code{feature_names} 组织特征值。
+    \item 调用 \code{predict_regression_value()} 或 \code{predict_classification_value()}。
+    \item 输出预测值或分类概率。
+    \item 可用于快速筛选候选分子。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{FormulaDesignPage}
+  \begin{itemize}
+    \item 文件位置：\file{chemstudio/ui/formula_design_page.py}。
+    \item 用户从数据库中选择多个分子作为组分。
+    \item 为每个组分输入比例。
+    \item 加载训练好的模型。
+    \item 生成配方特征并预测目标性能。
+    \item 保存配方记录，便于后续回顾和比较。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{FormulaService}
+  \begin{itemize}
+    \item 核心文件：\file{chemstudio/services/formula_service.py}。
+    \item 校验配方组分和比例。
+    \item 从分子目录中读取每个组分的可用特征。
+    \item 当前采用按比例加权平均的配方特征工程。
+    \item 调用模型服务进行预测。
+    \item 使用 \code{FormulaRepository} 保存、读取和删除配方。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{配方特征工程}
+  \begin{templatebox}{当前 MVP 策略}
+    对每个组分的同名特征按配比加权平均，得到配方级特征。
+  \end{templatebox}
+
+  \begin{itemize}
+    \item 优点：实现简单、解释性强、适合 MVP。
+    \item 对缺失特征进行安全处理，避免单个组分破坏整体预测。
+    \item 保留了后续扩展位点，例如相互作用项、非线性混合规则、工艺参数融合。
+    \item 输出结构与单分子特征保持一致，因此可复用同一套模型预测接口。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{配方设计页面的训练异步化}
+  \begin{itemize}
+    \item 配方设计页也引入 \code{FormulaTrainingWorker}。
+    \item 训练任务放入独立 \code{QThread}。
+    \item 页面显示进度条和当前状态。
+    \item 训练完成后主线程更新模型、指标和图表。
+    \item 与分子设计页保持一致的用户体验。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{通用控件}
+  \begin{itemize}
+    \item \code{BasePage} 提供页面基础能力。
+    \item \code{PandasTableModel} 将 pandas DataFrame 适配到 Qt 表格。
+    \item \code{MatplotlibCanvas} 将 matplotlib Figure 嵌入 PySide6。
+    \item 这些控件避免重复代码，也让页面逻辑更聚焦业务。
+  \end{itemize}
+\end{frame}
+
+\section{质量、健壮性与工程化}
+
+\begin{frame}{统一验证层}
+  \begin{itemize}
+    \item 目录：\file{chemstudio/validation/}。
+    \item \code{validate_smiles()}：解析并标准化 SMILES。
+    \item \code{validate_molecule_name()}：检查名称长度和空值。
+    \item \code{validate_ratio()}：校验配方比例为合法正数。
+    \item \code{validate_target_column()}：确认目标列存在并有可用值。
+    \item \code{validate_feature_names()}：确认特征列表非空且存在于数据集中。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{日志与配置}
+  \begin{itemize}
+    \item \file{chemstudio/utils/config.py} 定义应用资源路径。
+    \item 数据库路径可通过 \code{CHEMSTUDIO_DATABASE_PATH} 覆盖。
+    \item \file{chemstudio/utils/logger.py} 配置应用日志。
+    \item 日志级别可通过 \code{CHEMSTUDIO_LOG_LEVEL} 控制。
+    \item 默认日志文件位于资源目录的 logs 下。
+    \item UI 层异常处理会记录日志，方便定位问题。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{错误处理策略}
+  \begin{itemize}
+    \item UI 层避免裸 \code{except Exception} 后静默失败。
+    \item 对用户可恢复的问题使用 QMessageBox 给出提示。
+    \item 对开发者需要排查的问题写入 logger。
+    \item 模型文件加载、导入文件格式、SMILES 校验都抛出明确错误。
+    \item 后台线程失败时通过 signal 把异常信息传回主线程。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{测试体系}
+  \begin{itemize}
+    \item 测试目录：\file{chemstudio/tests/}。
+    \item 覆盖数据库 smoke test、导入服务、模型服务、描述符服务。
+    \item 覆盖特征选择、验证层、日志配置。
+    \item 覆盖 DataPage 和 FormulaDesignPage 的 UI 关键路径。
+    \item 覆盖 Repository 拆分后的实体读写能力。
+    \item \code{conftest.py} 设置 Qt offscreen，方便 CI 环境运行。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{工程化配置}
+  \begin{itemize}
+    \item \file{pyproject.toml} 统一定义包名、版本、依赖和测试路径。
+    \item \file{requirements.txt} 支持普通安装。
+    \item \file{.pre-commit-config.yaml} 加入提交前检查。
+    \item \file{.github/workflows/test.yml} 配置 GitHub Actions 测试。
+    \item \code{chemstudio} 命令行入口指向 \code{chemstudio.app:main}。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{当前测试结果}
+  \begin{templatebox}{最近一次验证}
+    \code{pytest -q} 结果：38 个测试全部通过。
+  \end{templatebox}
+
+  \begin{itemize}
+    \item 唯一提示是 joblib 在当前环境中无法探测物理 CPU 核心数。
+    \item 该 warning 不影响功能，会回退到逻辑核心数。
+    \item 可以通过设置 \code{LOKY_MAX_CPU_COUNT} 消除提示。
+  \end{itemize}
+\end{frame}
+
+\section{项目优势与未来规划}
+
+\begin{frame}{用户侧优势}
+  \begin{itemize}
+    \item \kw{低门槛}：用户可以通过桌面界面完成导入、训练、预测。
+    \item \kw{一体化}：数据、特征、模型、配方都在同一应用中流转。
+    \item \kw{可追溯}：模型保存特征列表、目标列、指标和特征筛选报告。
+    \item \kw{可解释}：特征筛选报告显示每一步保留和移除情况。
+    \item \kw{Excel 友好}：导出 CSV 使用 UTF-8 BOM，方便中文环境。
+    \item \kw{响应更好}：训练异步化降低 UI 卡顿。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{工程侧优势}
+  \begin{itemize}
+    \item \kw{分层清楚}：UI、Service、ML、Repository、Validation 各司其职。
+    \item \kw{可测试}：业务逻辑从 UI 中拆出，测试可以直接调用服务和仓储。
+    \item \kw{可扩展}：模型目录、特征工程、配方规则都可以增加新实现。
+    \item \kw{可维护}：Repository 拆分减少 DatabaseManager 的职责膨胀。
+    \item \kw{安全性提升}：模型加载要求可信确认，SQL 排序字段有 allowlist。
+    \item \kw{性能优化}：WAL、描述符并行、特征筛选缓存、异步训练共同改善体验。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{与纯脚本方案相比}
+  \begin{table}
+    \small
+    \begin{tabularx}{\textwidth}{p{0.24\textwidth}X X}
+      \toprule
+      维度 & 纯脚本流程 & ChemStudio \\
+      \midrule
+      数据管理 & 文件分散，列名不统一 & SQLite 统一管理，宽表可复用 \\
+      使用门槛 & 需要 Python 经验 & 桌面界面驱动 \\
+      模型复现 & 脚本参数易丢失 & artifact 保存特征、指标、报告 \\
+      特征工程 & 手工维护列列表 & 自动推断和多阶段筛选 \\
+      配方预测 & 常需另写脚本 & 内置配方页面和服务 \\
+      \bottomrule
+    \end{tabularx}
+  \end{table}
+\end{frame}
+
+\begin{frame}{当前限制}
+  \begin{itemize}
+    \item SQLite 适合单机 MVP，团队协作时需要更强的数据后端。
+    \item 配方特征目前使用加权平均，尚未建模复杂相互作用。
+    \item Mordred 描述符多，超大数据集仍可能需要更强缓存或批处理队列。
+    \item UI 仍以传统 widgets 为主，复杂工作流可以继续优化交互。
+    \item 模型解释性目前主要来自特征报告和随机森林重要性，尚未集成 SHAP 等工具。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{近期可继续优化}
+  \begin{enumerate}
+    \item 宽表查询增加 TTL 缓存，减少重复 pivot。
+    \item 特征筛选报告改为树形控件，每一步可展开查看移除特征。
+    \item 导出 CSV 增加选项：全部特征、筛选后特征、编码、是否包含元数据。
+    \item 配方特征增加相互作用项和工艺参数融合。
+    \item 训练结果页增加模型对比表，支持多次训练横向比较。
+    \item 引入模型解释工具，展示 Top 特征贡献。
+  \end{enumerate}
+\end{frame}
+
+\begin{frame}{中长期路线}
+  \begin{itemize}
+    \item \kw{数据层}：从 SQLite 扩展到 PostgreSQL 或远程 API。
+    \item \kw{协作层}：增加用户、项目空间、版本管理和审计。
+    \item \kw{算法层}：加入主动学习、贝叶斯优化、候选分子推荐。
+    \item \kw{化学层}：接入更多指纹、图神经网络和结构相似性搜索。
+    \item \kw{产品层}：打包为跨平台桌面应用，提供模板化工作流。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{总结}
+  \begin{templatebox}{ChemStudio 的核心价值}
+    它把材料和化学研发中的数据整理、描述符工程、机器学习训练、分子预测和配方预测，整合成一个可运行、可测试、可持续扩展的桌面应用。
+  \end{templatebox}
+
+  \vspace{0.3cm}
+  \begin{itemize}
+    \item 对用户：降低从实验数据到模型预测的门槛。
+    \item 对开发：通过分层架构和测试体系支撑后续迭代。
+    \item 对项目：MVP 已具备清晰产品闭环，并保留进一步扩展空间。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}
+  \centering
+  \Huge 谢谢
+
+  \vspace{0.5cm}
+  \Large ChemStudio Project
+\end{frame}
+
+\end{document}

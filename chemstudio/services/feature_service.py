@@ -6,6 +6,9 @@ import numpy as np
 import pandas as pd
 
 from chemstudio.database.db_manager import DatabaseManager
+from chemstudio.database.repositories import DescriptorRepository
+from chemstudio.ml.base import ProblemType
+from chemstudio.ml.feature_selection import FeatureSelectionStrategy, FeatureSelector
 from chemstudio.ml.featurizers import compute_mordred_descriptors
 from chemstudio.utils.file_utils import normalize_field_name, parse_feature_text
 
@@ -37,9 +40,10 @@ class FeatureService:
         "updated_at",
     }
 
-    def __init__(self, db_manager: DatabaseManager) -> None:
+    def __init__(self, db_manager: DatabaseManager, descriptor_repository: DescriptorRepository | None = None) -> None:
         """保存数据库访问依赖，用于推断训练特征列。"""
         self.db_manager = db_manager
+        self.descriptor_repository = descriptor_repository or DescriptorRepository(db_manager)
 
     @property
     def rdkit_available(self) -> bool:
@@ -48,7 +52,7 @@ class FeatureService:
 
     def infer_feature_columns(self, dataset: pd.DataFrame, target_name: str) -> list[str]:
         """Identify numeric feature columns that should be used for model training."""
-        property_names = set(self.db_manager.list_property_names())
+        property_names = set(self.descriptor_repository.list_property_names())
         numeric_columns = list(dataset.select_dtypes(include=[np.number]).columns)
         feature_columns = [
             column
@@ -58,6 +62,32 @@ class FeatureService:
         if feature_columns:
             return sorted(feature_columns)
         return [column for column in numeric_columns if column not in {"id", target_name}]
+
+    def select_features(
+        self,
+        dataset: pd.DataFrame,
+        *,
+        target_name: str,
+        feature_names: list[str],
+        problem_type: ProblemType,
+        strategy: FeatureSelectionStrategy = "none",
+        max_features: int = 150,
+    ) -> tuple[list[str], dict[str, object]]:
+        """Select a compact feature subset and return a traceable report."""
+        training_frame = dataset[feature_names + [target_name]].copy()
+        training_frame = training_frame.dropna(subset=[target_name])
+        if training_frame.empty:
+            raise ValueError("Feature selection requires rows with a non-empty target value.")
+
+        x_frame = training_frame[feature_names]
+        if problem_type == "classification":
+            y_values = training_frame[target_name].astype(int)
+        else:
+            y_values = training_frame[target_name].astype(float)
+
+        selector = FeatureSelector(strategy=strategy, max_features=max_features)
+        selected_features, report = selector.select(x_frame, y_values, problem_type)
+        return selected_features, report.to_dict()
 
     def compute_descriptors(self, smiles: str) -> tuple[dict[str, float], str]:
         """Generate RDKit basics plus Mordred descriptors."""
@@ -86,7 +116,7 @@ class FeatureService:
 
     def save_descriptors(self, molecule_id: int, descriptors: dict[str, object]) -> None:
         """Persist descriptor values for a molecule."""
-        self.db_manager.save_descriptors(molecule_id, descriptors)
+        self.descriptor_repository.save_descriptors(molecule_id, descriptors)
 
     def compute_and_persist_descriptors(self, molecule_id: int, smiles: str) -> dict[str, float]:
         """Compute descriptors and store them on the molecule detail record."""

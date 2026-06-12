@@ -3,6 +3,12 @@ from __future__ import annotations
 from PySide6.QtWidgets import QMainWindow, QStackedWidget
 
 from chemstudio.database.db_manager import DatabaseManager
+from chemstudio.database.repositories import (
+    DescriptorRepository,
+    FormulaRepository,
+    ModelRepository,
+    MoleculeRepository,
+)
 from chemstudio.services import (
     DataImportService,
     FeatureService,
@@ -23,11 +29,20 @@ class MainWindow(QMainWindow):
     def __init__(self, db_manager: DatabaseManager) -> None:
         super().__init__()
         self.db_manager = db_manager
+        self.molecule_repository = MoleculeRepository(db_manager)
+        self.descriptor_repository = DescriptorRepository(db_manager)
+        self.model_repository = ModelRepository(db_manager)
+        self.formula_repository = FormulaRepository(db_manager)
         self.data_import_service = DataImportService(db_manager)
         self.visualization_service = VisualizationService()
-        self.feature_service = FeatureService(db_manager)
-        self.model_service = ModelService(db_manager, self.feature_service)
-        self.formula_service = FormulaService(db_manager)
+        self.feature_service = FeatureService(db_manager, self.descriptor_repository)
+        self.model_service = ModelService(
+            db_manager,
+            self.feature_service,
+            self.model_repository,
+            self.descriptor_repository,
+        )
+        self.formula_service = FormulaService(db_manager, self.formula_repository)
 
         self.setWindowTitle(AppConfig.APP_NAME)
         self.resize(AppConfig.WINDOW_WIDTH, AppConfig.WINDOW_HEIGHT)
@@ -42,14 +57,25 @@ class MainWindow(QMainWindow):
 
     def _build_pages(self) -> dict[str, object]:
         home_page = HomePage()
-        data_page = DataPage(self.db_manager, self.data_import_service, self.visualization_service)
+        data_page = DataPage(
+            self.db_manager,
+            self.data_import_service,
+            self.visualization_service,
+            self.molecule_repository,
+        )
         molecule_page = MoleculeDesignPage(
             self.db_manager,
             self.feature_service,
             self.model_service,
             self.visualization_service,
+            self.molecule_repository,
         )
-        formula_page = FormulaDesignPage(self.db_manager, self.formula_service, self.model_service)
+        formula_page = FormulaDesignPage(
+            self.db_manager,
+            self.formula_service,
+            self.model_service,
+            self.molecule_repository,
+        )
 
         pages = {
             "home": home_page,

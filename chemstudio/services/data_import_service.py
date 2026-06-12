@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -11,6 +13,13 @@ from chemstudio.database.models import MoleculeImportRecord
 from chemstudio.ml.featurizers import compute_mordred_descriptors
 from chemstudio.utils.config import AppConfig
 from chemstudio.utils.file_utils import normalize_field_name, read_tabular_file
+from chemstudio.validation import validate_molecule_name, validate_smiles
+
+try:  # pragma: no cover - dependency is declared, fallback keeps imports resilient
+    from joblib import Parallel, delayed
+except ImportError:  # pragma: no cover
+    Parallel = None
+    delayed = None
 
 try:
     from rdkit import Chem
@@ -20,6 +29,9 @@ except ImportError:  # pragma: no cover
     Descriptors = None
     inchi = None
     rdMolDescriptors = None
+
+
+logger = logging.getLogger(__name__)
 
 
 class DataImportService:
@@ -142,7 +154,7 @@ class DataImportService:
             else:
                 feature_columns.append(original_name)
 
-        records: list[MoleculeImportRecord] = []
+        pending_records: list[dict[str, object]] = []
         for row_index, (_, row) in enumerate(dataframe.iterrows(), start=1):
             name = self._extract_text(row, mapped_columns, self.NAME_COLUMNS) or f"molecule_{row_index}"
             smiles = self._extract_text(row, mapped_columns, self.SMILES_COLUMNS)
@@ -163,11 +175,29 @@ class DataImportService:
                 }
             )
 
+            pending_records.append(
+                {
+                    "standardized": standardized,
+                    "source": source,
+                    "features": features,
+                    "properties": properties,
+                }
+            )
+
+        descriptor_results = self._compute_descriptors_batch(
+            [str(item["standardized"]["canonical_smiles"]) for item in pending_records]  # type: ignore[index]
+        )
+
+        records: list[MoleculeImportRecord] = []
+        for item, descriptors in zip(pending_records, descriptor_results, strict=True):
+            standardized = item["standardized"]
+            if not isinstance(standardized, Mapping):
+                raise ValueError("Internal import state is invalid.")
             records.append(
                 MoleculeImportRecord(
                     name=str(standardized["name"]),
                     smiles=str(standardized["canonical_smiles"]),
-                    source=source,
+                    source=str(item["source"]),
                     code=standardized.get("code") if isinstance(standardized.get("code"), str) else None,
                     input_smiles=str(standardized["input_smiles"]),
                     canonical_smiles=str(standardized["canonical_smiles"]),
@@ -177,9 +207,9 @@ class DataImportService:
                     notes=str(standardized["notes"]),
                     is_hidden=bool(standardized["is_hidden"]),
                     parameters=dict(standardized["parameters"]),
-                    descriptors=self._compute_import_descriptors(str(standardized["canonical_smiles"])),
-                    features=features,
-                    properties=properties,
+                    descriptors=descriptors,
+                    features=dict(item["features"]),
+                    properties=dict(item["properties"]),
                 )
             )
 
@@ -195,20 +225,15 @@ class DataImportService:
     def validate_and_standardize(self, payload: Mapping[str, object]) -> dict[str, object]:
         """Validate molecule input and add canonical structure metadata when RDKit is available."""
         smiles = str(payload.get("smiles") or payload.get("canonical_smiles") or "").strip()
-        if not smiles:
-            raise ValueError("SMILES is required.")
+        canonical_smiles = validate_smiles(smiles)
 
         if Chem is not None:
-            molecule = Chem.MolFromSmiles(smiles)
-            if molecule is None:
-                raise ValueError("Unable to parse SMILES.")
-            canonical_smiles = Chem.MolToSmiles(molecule, canonical=True)
+            molecule = Chem.MolFromSmiles(canonical_smiles)
             molecular_formula = rdMolDescriptors.CalcMolFormula(molecule) if rdMolDescriptors else ""
             molecular_weight = float(Descriptors.MolWt(molecule)) if Descriptors else 0.0
             inchi_value = inchi.MolToInchi(molecule) if inchi is not None else ""
             inchikey_value = inchi.MolToInchiKey(molecule) if inchi is not None else ""
         else:  # pragma: no cover
-            canonical_smiles = smiles
             molecular_formula = ""
             molecular_weight = 0.0
             inchi_value = ""
@@ -228,7 +253,7 @@ class DataImportService:
 
         return {
             "code": self._clean_text(payload.get("code")),
-            "name": self._clean_text(payload.get("name")) or canonical_smiles,
+            "name": validate_molecule_name(self._clean_text(payload.get("name")) or canonical_smiles),
             "input_smiles": smiles,
             "canonical_smiles": canonical_smiles,
             "inchi": inchi_value,
@@ -342,6 +367,35 @@ class DataImportService:
     def _compute_import_descriptors(self, smiles: str) -> dict[str, float]:
         """Generate Mordred descriptors during import."""
         return compute_mordred_descriptors(smiles)
+
+    def _compute_descriptors_batch(self, smiles_list: list[str]) -> list[dict[str, float]]:
+        """Generate Mordred descriptors for many SMILES strings with a safe parallel fallback."""
+        if not smiles_list:
+            return []
+        if Parallel is None or delayed is None or len(smiles_list) < 50:
+            return [self._compute_import_descriptors(smiles) for smiles in smiles_list]
+
+        started_at = time.perf_counter()
+        logger.info("Computing Mordred descriptors in parallel for %d molecules.", len(smiles_list))
+        try:
+            results = Parallel(n_jobs=-1, prefer="threads")(
+                delayed(compute_mordred_descriptors)(smiles) for smiles in smiles_list
+            )
+        except (RuntimeError, ValueError) as exc:
+            logger.warning("Parallel Mordred descriptor calculation failed; falling back to serial: %s", exc)
+            return [self._compute_import_descriptors(smiles) for smiles in smiles_list]
+
+        elapsed_seconds = time.perf_counter() - started_at
+        logger.info(
+            "Computed Mordred descriptors for %d molecules in %.2f seconds.",
+            len(smiles_list),
+            elapsed_seconds,
+        )
+        return [dict(result) for result in results]
+
+    def _compute_descriptors_parallel(self, smiles_list: list[str]) -> list[dict[str, float]]:
+        """Backward-compatible wrapper for the batch Mordred descriptor path."""
+        return self._compute_descriptors_batch(smiles_list)
 
     def _parse_parameters(self, raw_value: object, *, row_index: int) -> dict[str, object]:
         if raw_value in (None, ""):

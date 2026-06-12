@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
@@ -13,6 +15,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QStackedWidget,
     QTableWidget,
@@ -23,9 +26,35 @@ from PySide6.QtWidgets import (
 )
 
 from chemstudio.database.db_manager import DatabaseManager
+from chemstudio.database.repositories import MoleculeRepository
 from chemstudio.services.formula_service import FormulaService
 from chemstudio.services.model_service import ModelService
 from chemstudio.ui.widgets import BasePage
+
+
+logger = logging.getLogger(__name__)
+
+
+class FormulaTrainingWorker(QObject):
+    """Run formulation model training outside the GUI thread."""
+
+    finished = Signal(dict)
+    failed = Signal(str)
+
+    def __init__(self, formula_service: FormulaService, parameters: dict[str, Any]) -> None:
+        super().__init__()
+        self.formula_service = formula_service
+        self.parameters = parameters
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            artifact = self.formula_service.train_formulation_model(**self.parameters)
+        except (RuntimeError, ValueError) as exc:
+            logger.exception("Background formulation model training failed")
+            self.failed.emit(str(exc))
+            return
+        self.finished.emit(artifact)
 
 
 class FormulaDesignPage(BasePage):
@@ -36,13 +65,17 @@ class FormulaDesignPage(BasePage):
         db_manager: DatabaseManager,
         formula_service: FormulaService,
         model_service: ModelService,
+        molecule_repository: MoleculeRepository | None = None,
     ) -> None:
         super().__init__()
         self.db_manager = db_manager
+        self.molecule_repository = molecule_repository or MoleculeRepository(db_manager)
         self.formula_service = formula_service
         self.model_service = model_service
         self.current_artifact: dict[str, Any] | None = None
         self.molecule_catalog: list[dict[str, Any]] = []
+        self._training_thread: QThread | None = None
+        self._training_worker: FormulaTrainingWorker | None = None
         self._build_ui()
         self.refresh_page()
 
@@ -253,11 +286,11 @@ class FormulaDesignPage(BasePage):
         setup_layout = QFormLayout(setup_box)
         self.training_target_combo = QComboBox()
         self.training_model_combo = QComboBox()
-        train_button = QPushButton("训练模型")
-        train_button.clicked.connect(self._train_formulation_model)
+        self.training_train_button = QPushButton("训练模型")
+        self.training_train_button.clicked.connect(self._train_formulation_model)
         setup_layout.addRow("目标字段", self.training_target_combo)
         setup_layout.addRow("模型", self.training_model_combo)
-        setup_layout.addRow("", train_button)
+        setup_layout.addRow("", self.training_train_button)
 
         metrics_box = QGroupBox("训练结果")
         metrics_layout = QFormLayout(metrics_box)
@@ -266,11 +299,15 @@ class FormulaDesignPage(BasePage):
         self.training_mae_label = QLabel("-")
         self.training_rmse_label = QLabel("-")
         self.training_model_info_label = QLabel("-")
+        self.training_progress = QProgressBar()
+        self.training_progress.setRange(0, 0)
+        self.training_progress.setVisible(False)
         metrics_layout.addRow("数据概况", self.training_summary_label)
         metrics_layout.addRow("模型信息", self.training_model_info_label)
         metrics_layout.addRow("R²", self.training_r2_label)
         metrics_layout.addRow("MAE", self.training_mae_label)
         metrics_layout.addRow("RMSE", self.training_rmse_label)
+        metrics_layout.addRow("训练状态", self.training_progress)
 
         layout.addWidget(setup_box)
         layout.addWidget(metrics_box)
@@ -351,7 +388,7 @@ class FormulaDesignPage(BasePage):
         self.refresh_page()
 
     def _refresh_molecule_catalog(self) -> None:
-        self.molecule_catalog = self.db_manager.list_molecules()
+        self.molecule_catalog = self.molecule_repository.list_catalog()
 
     def _refresh_training_targets(self) -> None:
         current_target = self.training_target_combo.currentText()
@@ -700,7 +737,8 @@ class FormulaDesignPage(BasePage):
                 test_conditions=self.learning_test_conditions_input.toPlainText(),
                 auto_normalize=False,
             )
-        except Exception as exc:
+        except (RuntimeError, ValueError) as exc:
+            logger.exception("Failed to save formulation")
             QMessageBox.critical(self, "保存失败", str(exc))
             return
 
@@ -714,17 +752,57 @@ class FormulaDesignPage(BasePage):
         if not target_name:
             QMessageBox.information(self, "缺少目标字段", "请先选择一个训练目标字段。")
             return
-
-        try:
-            self.current_artifact = self.formula_service.train_formulation_model(
-                target_name=target_name,
-                model_key=str(self.training_model_combo.currentData()),
-            )
-        except Exception as exc:
-            QMessageBox.critical(self, "训练失败", str(exc))
+        if self._training_thread is not None:
+            QMessageBox.information(self, "正在训练", "当前已有配方模型训练任务正在运行。")
             return
 
-        artifact = self.current_artifact
+        parameters = {
+            "target_name": target_name,
+            "model_key": str(self.training_model_combo.currentData()),
+        }
+        self._start_training_worker(parameters)
+
+    def _start_training_worker(self, parameters: dict[str, Any]) -> None:
+        self._set_training_busy(True)
+        self.training_summary_label.setText(f"正在训练: {parameters['target_name']} ...")
+        self.training_model_info_label.setText("训练运行中")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+
+        thread = QThread(self)
+        worker = FormulaTrainingWorker(self.formula_service, parameters)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._handle_training_finished)
+        worker.failed.connect(self._handle_training_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        worker.failed.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._handle_training_thread_finished)
+        self._training_thread = thread
+        self._training_worker = worker
+        thread.start()
+
+    @Slot(dict)
+    def _handle_training_finished(self, artifact: dict[str, Any]) -> None:
+        self.current_artifact = artifact
+        self._render_training_artifact(artifact)
+
+    @Slot(str)
+    def _handle_training_failed(self, message: str) -> None:
+        QMessageBox.critical(self, "训练失败", message)
+        self.training_summary_label.setText("训练失败")
+        self.training_model_info_label.setText("-")
+
+    @Slot()
+    def _handle_training_thread_finished(self) -> None:
+        self._training_thread = None
+        self._training_worker = None
+        self._set_training_busy(False)
+        QApplication.restoreOverrideCursor()
+
+    def _render_training_artifact(self, artifact: dict[str, Any]) -> None:
         metrics = artifact["metrics"]
         self.training_summary_label.setText(
             f"{artifact['sample_count']} 个样本 | {len(artifact['feature_names'])} 个特征"
@@ -733,6 +811,15 @@ class FormulaDesignPage(BasePage):
         self.training_r2_label.setText(f"{metrics['r2']:.4f}")
         self.training_mae_label.setText(f"{metrics['mae']:.4f}")
         self.training_rmse_label.setText(f"{metrics['rmse']:.4f}")
+
+    def _set_training_busy(self, busy: bool) -> None:
+        self.training_progress.setVisible(busy)
+        for widget in (
+            self.training_target_combo,
+            self.training_model_combo,
+            self.training_train_button,
+        ):
+            widget.setEnabled(not busy)
 
     def _predict_new_formulation(self) -> None:
         if self.current_artifact is None:
@@ -754,7 +841,8 @@ class FormulaDesignPage(BasePage):
                 test_conditions=self.prediction_test_conditions_input.toPlainText(),
                 auto_normalize=False,
             )
-        except Exception as exc:
+        except (KeyError, RuntimeError, TypeError, ValueError) as exc:
+            logger.exception("Failed to predict formulation")
             QMessageBox.critical(self, "预测失败", str(exc))
             return
 

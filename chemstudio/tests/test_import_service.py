@@ -125,3 +125,38 @@ def test_imported_descriptors_are_hidden_from_default_wide_dataset(tmp_path, mon
     training_dataset = db_manager.get_wide_dataset(include_mordred=True)
     assert float(training_dataset.loc[0, "ABC"]) == 1.25
     assert float(training_dataset.loc[0, "MW"]) == 46.07
+
+
+def test_data_import_service_parallelizes_large_descriptor_batches(tmp_path, monkeypatch):
+    import chemstudio.services.data_import_service as data_import_module
+
+    calls: list[str] = []
+
+    class FakeParallel:
+        def __init__(self, *, n_jobs, prefer):
+            assert n_jobs == -1
+            assert prefer == "threads"
+
+        def __call__(self, tasks):
+            return [task() for task in tasks]
+
+    def fake_delayed(function):
+        def build_task(smiles):
+            return lambda: function(smiles)
+
+        return build_task
+
+    def fake_compute(smiles):
+        calls.append(smiles)
+        return {"descriptor": float(len(smiles))}
+
+    monkeypatch.setattr(data_import_module, "Parallel", FakeParallel)
+    monkeypatch.setattr(data_import_module, "delayed", fake_delayed)
+    monkeypatch.setattr(data_import_module, "compute_mordred_descriptors", fake_compute)
+
+    service = DataImportService(DatabaseManager(tmp_path / "chemstudio.sqlite"))
+    results = service._compute_descriptors_parallel(["CCO"] * 50)
+
+    assert len(results) == 50
+    assert calls == ["CCO"] * 50
+    assert results[0] == {"descriptor": 3.0}

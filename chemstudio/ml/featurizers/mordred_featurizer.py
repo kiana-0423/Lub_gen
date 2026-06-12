@@ -2,23 +2,33 @@ from __future__ import annotations
 
 import logging
 import math
+from functools import lru_cache
 
 from rdkit import Chem
-from mordred import Calculator, descriptors
+
+try:  # pragma: no cover - optional in lightweight test environments
+    from mordred import Calculator, descriptors
+except ImportError:  # pragma: no cover
+    Calculator = None
+    descriptors = None
 
 
 logger = logging.getLogger(__name__)
-_calculator = None
 
 
+def is_mordred_available() -> bool:
+    """Return whether Mordred descriptor calculation is available."""
+    return Calculator is not None and descriptors is not None
+
+
+@lru_cache(maxsize=1)
 def _get_calculator():
     """Return a lazily initialized Mordred 2D descriptor calculator."""
-    global _calculator
-    if _calculator is not None:
-        return _calculator
-    _calculator = Calculator(descriptors, ignore_3D=True)
-    logger.info("Initialized Mordred calculator with %d descriptors.", len(_calculator.descriptors))
-    return _calculator
+    if not is_mordred_available():
+        raise RuntimeError("Mordred is not installed.")
+    calculator = Calculator(descriptors, ignore_3D=True)
+    logger.info("Initialized Mordred calculator with %d descriptors.", len(calculator.descriptors))
+    return calculator
 
 
 def compute_mordred_descriptors(smiles: str) -> dict[str, float]:
@@ -29,6 +39,9 @@ def compute_mordred_descriptors(smiles: str) -> dict[str, float]:
     molecule = Chem.MolFromSmiles(smiles)
     if molecule is None:
         logger.warning("RDKit could not parse SMILES for Mordred descriptors: %s", smiles)
+        return {}
+    if not is_mordred_available():
+        logger.warning("Mordred is not installed; skipping Mordred descriptors.")
         return {}
 
     calculator = _get_calculator()

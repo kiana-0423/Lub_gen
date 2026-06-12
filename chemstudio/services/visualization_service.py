@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+import logging
 import os
 
 from chemstudio.utils.config import AppConfig, ensure_runtime_directories
@@ -19,6 +20,9 @@ try:  # pragma: no cover - optional dependency in some environments
 except ImportError:  # pragma: no cover
     Chem = None
     AllChem = None
+
+
+logger = logging.getLogger(__name__)
 
 
 class VisualizationService:
@@ -133,10 +137,12 @@ class VisualizationService:
                 AllChem.MMFFOptimizeMolecule(molecule, maxIters=500)
             else:
                 AllChem.UFFOptimizeMolecule(molecule, maxIters=500)
-        except Exception:  # pragma: no cover - best effort fallback for uncommon chemistries
+        except Exception as exc:  # pragma: no cover - best effort fallback for uncommon chemistries
+            logger.warning("MMFF optimization failed for SMILES %s; trying UFF fallback: %s", normalized_smiles, exc)
             try:
                 AllChem.UFFOptimizeMolecule(molecule, maxIters=500)
-            except Exception:
+            except Exception as fallback_exc:
+                logger.warning("UFF optimization failed for SMILES %s: %s", normalized_smiles, fallback_exc)
                 pass
 
         return Chem.MolToMolBlock(molecule), None

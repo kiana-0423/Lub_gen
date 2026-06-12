@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+from typing import Any
 
+from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QDoubleSpinBox,
     QFileDialog,
@@ -13,6 +17,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QComboBox,
     QLineEdit,
@@ -22,11 +27,37 @@ from PySide6.QtWidgets import (
 )
 
 from chemstudio.database.db_manager import DatabaseManager
+from chemstudio.database.repositories import MoleculeRepository
 from chemstudio.services.feature_service import FeatureService
 from chemstudio.services.model_service import ModelService
 from chemstudio.services.visualization_service import VisualizationService
 from chemstudio.ui.widgets import BasePage, MatplotlibCanvas
 from chemstudio.utils.config import AppConfig
+
+
+logger = logging.getLogger(__name__)
+
+
+class ModelTrainingWorker(QObject):
+    """Run molecule model training outside the GUI thread."""
+
+    finished = Signal(dict)
+    failed = Signal(str)
+
+    def __init__(self, model_service: ModelService, parameters: dict[str, Any]) -> None:
+        super().__init__()
+        self.model_service = model_service
+        self.parameters = parameters
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            artifact = self.model_service.train_model(**self.parameters)
+        except (RuntimeError, ValueError) as exc:
+            logger.exception("Background molecule model training failed")
+            self.failed.emit(str(exc))
+            return
+        self.finished.emit(artifact)
 
 
 class MoleculeDesignPage(BasePage):
@@ -38,13 +69,17 @@ class MoleculeDesignPage(BasePage):
         feature_service: FeatureService,
         model_service: ModelService,
         visualization_service: VisualizationService,
+        molecule_repository: MoleculeRepository | None = None,
     ) -> None:
         super().__init__()
         self.db_manager = db_manager
         self.feature_service = feature_service
         self.model_service = model_service
         self.visualization_service = visualization_service
+        self.molecule_repository = molecule_repository or MoleculeRepository(db_manager)
         self.current_artifact: dict[str, object] | None = None
+        self._training_thread: QThread | None = None
+        self._training_worker: ModelTrainingWorker | None = None
         self._build_ui()
         self.refresh_page()
 
@@ -88,15 +123,26 @@ class MoleculeDesignPage(BasePage):
         self.hp_iter_spin = QSpinBox()
         self.hp_iter_spin.setRange(1, 100)
         self.hp_iter_spin.setValue(20)
+        self.feature_selection_combo = QComboBox()
+        self.feature_selection_combo.addItem("不筛选", userData="none")
+        self.feature_selection_combo.addItem("方差过滤", userData="variance")
+        self.feature_selection_combo.addItem("去相关", userData="correlation")
+        self.feature_selection_combo.addItem("单变量筛选", userData="univariate")
+        self.feature_selection_combo.addItem("模型筛选", userData="model_based")
+        self.feature_selection_combo.addItem("全流程", userData="full")
+        self.feature_selection_combo.setCurrentIndex(5)
+        self.max_features_spin = QSpinBox()
+        self.max_features_spin.setRange(10, 500)
+        self.max_features_spin.setValue(150)
 
-        refresh_button = QPushButton("刷新训练数据")
-        refresh_button.clicked.connect(self.refresh_page)
-        train_button = QPushButton("开始训练")
-        train_button.clicked.connect(self._train_model)
-        save_button = QPushButton("保存模型")
-        save_button.clicked.connect(self._save_model)
-        load_button = QPushButton("读取模型")
-        load_button.clicked.connect(self._load_model)
+        self.refresh_training_button = QPushButton("刷新训练数据")
+        self.refresh_training_button.clicked.connect(self.refresh_page)
+        self.train_button = QPushButton("开始训练")
+        self.train_button.clicked.connect(self._train_model)
+        self.save_model_button = QPushButton("保存模型")
+        self.save_model_button.clicked.connect(self._save_model)
+        self.load_model_button = QPushButton("读取模型")
+        self.load_model_button.clicked.connect(self._load_model)
 
         controls_form.addWidget(QLabel("目标性能"), 0, 0)
         controls_form.addWidget(self.target_combo, 0, 1)
@@ -110,10 +156,14 @@ class MoleculeDesignPage(BasePage):
         controls_form.addWidget(self.hp_method_combo, 4, 1)
         controls_form.addWidget(QLabel("搜索迭代数"), 5, 0)
         controls_form.addWidget(self.hp_iter_spin, 5, 1)
-        controls_form.addWidget(refresh_button, 6, 0)
-        controls_form.addWidget(train_button, 6, 1)
-        controls_form.addWidget(save_button, 7, 0)
-        controls_form.addWidget(load_button, 7, 1)
+        controls_form.addWidget(QLabel("特征筛选策略"), 6, 0)
+        controls_form.addWidget(self.feature_selection_combo, 6, 1)
+        controls_form.addWidget(QLabel("最大特征数"), 7, 0)
+        controls_form.addWidget(self.max_features_spin, 7, 1)
+        controls_form.addWidget(self.refresh_training_button, 8, 0)
+        controls_form.addWidget(self.train_button, 8, 1)
+        controls_form.addWidget(self.save_model_button, 9, 0)
+        controls_form.addWidget(self.load_model_button, 9, 1)
 
         metrics_box = QGroupBox("训练结果")
         metrics_form = QFormLayout(metrics_box)
@@ -123,12 +173,19 @@ class MoleculeDesignPage(BasePage):
         self.metric_rmse_label = QLabel("-")
         self.metric_extra_label = QLabel("-")
         self.model_info_label = QLabel("-")
+        self.feature_selection_report_label = QLabel("-")
+        self.feature_selection_report_label.setWordWrap(True)
+        self.training_progress = QProgressBar()
+        self.training_progress.setRange(0, 0)
+        self.training_progress.setVisible(False)
         metrics_form.addRow("数据概况", self.dataset_info_label)
         metrics_form.addRow("模型信息", self.model_info_label)
         metrics_form.addRow("主指标", self.metric_r2_label)
         metrics_form.addRow("辅助指标 1", self.metric_mae_label)
         metrics_form.addRow("辅助指标 2", self.metric_rmse_label)
         metrics_form.addRow("CV / 搜索", self.metric_extra_label)
+        metrics_form.addRow("特征筛选", self.feature_selection_report_label)
+        metrics_form.addRow("训练状态", self.training_progress)
 
         self.canvas = MatplotlibCanvas(width=6.4, height=4.6)
 
@@ -174,7 +231,7 @@ class MoleculeDesignPage(BasePage):
         dataset = self.model_service.get_training_dataset()
         property_names = self.model_service.get_target_columns()
         self.dataset_info_label.setText(
-            f"{len(dataset)} 行, {len(dataset.columns)} 列, {len(self.db_manager.list_feature_names())} 个特征候选"
+            f"{len(dataset)} 行, {len(dataset.columns)} 列, {len(self.molecule_repository.list_feature_names())} 个特征候选"
         )
 
         self.target_combo.clear()
@@ -190,7 +247,8 @@ class MoleculeDesignPage(BasePage):
         if target_name:
             try:
                 problem_type = self.model_service.infer_problem_type(target_name)
-            except Exception:
+            except (RuntimeError, ValueError) as exc:
+                logger.warning("Failed to infer problem type for target %s: %s", target_name, exc)
                 problem_type = None
         self.model_combo.clear()
         for item in self.model_service.get_model_catalog(problem_type):
@@ -207,30 +265,72 @@ class MoleculeDesignPage(BasePage):
         if self.target_combo.count() == 0:
             QMessageBox.warning(self, "缺少目标列", "数据库中没有可训练的性能标签。")
             return
-
-        target_name = self.target_combo.currentText()
-        model_key = str(self.model_combo.currentData())
-        try:
-            artifact = self.model_service.train_model(
-                target_name=target_name,
-                model_key=model_key,
-                test_size=float(self.test_size_spin.value()),
-                cv_mode=self.cv_checkbox.isChecked(),
-                n_folds=int(self.cv_fold_combo.currentData()),
-                hp_search=self.hp_checkbox.isChecked(),
-                hp_method=str(self.hp_method_combo.currentData()),
-                hp_n_iter=int(self.hp_iter_spin.value()),
-            )
-        except Exception as exc:
-            QMessageBox.critical(self, "训练失败", str(exc))
+        if self._training_thread is not None:
+            QMessageBox.information(self, "正在训练", "当前已有训练任务正在运行。")
             return
 
+        target_name = self.target_combo.currentText()
+        parameters = {
+            "target_name": target_name,
+            "model_key": str(self.model_combo.currentData()),
+            "test_size": float(self.test_size_spin.value()),
+            "cv_mode": self.cv_checkbox.isChecked(),
+            "n_folds": int(self.cv_fold_combo.currentData()),
+            "hp_search": self.hp_checkbox.isChecked(),
+            "hp_method": str(self.hp_method_combo.currentData()),
+            "hp_n_iter": int(self.hp_iter_spin.value()),
+            "feature_selection": str(self.feature_selection_combo.currentData()),
+            "max_features": int(self.max_features_spin.value()),
+        }
+        self._start_training_worker(parameters)
+
+    def _start_training_worker(self, parameters: dict[str, Any]) -> None:
+        self._set_training_busy(True)
+        self.model_info_label.setText(f"正在训练: {parameters['target_name']} ...")
+        self.metric_extra_label.setText("训练运行中")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+
+        thread = QThread(self)
+        worker = ModelTrainingWorker(self.model_service, parameters)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._handle_training_finished)
+        worker.failed.connect(self._handle_training_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        worker.failed.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._handle_training_thread_finished)
+        self._training_thread = thread
+        self._training_worker = worker
+        thread.start()
+
+    @Slot(dict)
+    def _handle_training_finished(self, artifact: dict[str, object]) -> None:
         self.current_artifact = artifact
+        self._render_training_artifact(artifact)
+
+    @Slot(str)
+    def _handle_training_failed(self, message: str) -> None:
+        QMessageBox.critical(self, "训练失败", message)
+        self.model_info_label.setText("训练失败")
+        self.metric_extra_label.setText("-")
+
+    @Slot()
+    def _handle_training_thread_finished(self) -> None:
+        self._training_thread = None
+        self._training_worker = None
+        self._set_training_busy(False)
+        QApplication.restoreOverrideCursor()
+
+    def _render_training_artifact(self, artifact: dict[str, object]) -> None:
         metrics = artifact["metrics"]
         self._display_metrics(artifact)
         self.model_info_label.setText(
             f"{artifact['model_name']} | {artifact.get('problem_type', 'regression')} | 目标: {artifact['target_name']} | 特征数: {len(artifact['feature_names'])}"
         )
+        self._display_feature_selection_report(artifact)
         if artifact.get("problem_type") == "classification":
             self.visualization_service.plot_confusion_matrix(
                 self.canvas.axes,
@@ -268,6 +368,55 @@ class MoleculeDesignPage(BasePage):
             extras.append(f"Best {hp_results.get('scoring')}: {float(hp_results['best_score']):.4f}")
         self.metric_extra_label.setText(" | ".join(extras) if extras else "-")
 
+    def _display_feature_selection_report(self, artifact: dict[str, object]) -> None:
+        report = artifact.get("feature_selection_report")
+        if not isinstance(report, dict):
+            self.feature_selection_report_label.setText("-")
+            return
+        if report.get("strategy") == "none":
+            self.feature_selection_report_label.setText(
+                f"未启用特征筛选（共 {report.get('final_feature_count', 0)} 个特征）"
+            )
+            return
+        stages = report.get("stages")
+        stage_parts: list[str] = []
+        if isinstance(stages, list):
+            for stage in stages:
+                if not isinstance(stage, dict):
+                    continue
+                stage_parts.append(f"{stage.get('name')}: {stage.get('before_count')} -> {stage.get('after_count')}")
+        selected_features = report.get("selected_features")
+        preview = ""
+        if isinstance(selected_features, list) and selected_features:
+            preview_items = [str(feature) for feature in selected_features[:12]]
+            suffix = " ..." if len(selected_features) > 12 else ""
+            preview = f" | 最终特征: {', '.join(preview_items)}{suffix}"
+        self.feature_selection_report_label.setText(
+            f"{report.get('strategy', 'none')}: {report.get('initial_feature_count')} -> {report.get('final_feature_count')}"
+            + (f" | {'; '.join(stage_parts)}" if stage_parts else "")
+            + preview
+        )
+
+    def _set_training_busy(self, busy: bool) -> None:
+        self.training_progress.setVisible(busy)
+        for widget in (
+            self.target_combo,
+            self.model_combo,
+            self.test_size_spin,
+            self.cv_checkbox,
+            self.cv_fold_combo,
+            self.hp_checkbox,
+            self.hp_method_combo,
+            self.hp_iter_spin,
+            self.feature_selection_combo,
+            self.max_features_spin,
+            self.refresh_training_button,
+            self.train_button,
+            self.save_model_button,
+            self.load_model_button,
+        ):
+            widget.setEnabled(not busy)
+
     def _save_model(self) -> None:
         if self.current_artifact is None:
             QMessageBox.information(self, "无可保存模型", "请先训练模型或加载已保存模型。")
@@ -297,9 +446,19 @@ class MoleculeDesignPage(BasePage):
         )
         if not file_path:
             return
+        confirmed = QMessageBox.warning(
+            self,
+            "确认读取模型",
+            "模型文件使用 joblib/pickle 格式，请仅读取自己训练或可信来源的文件。\n确定继续读取吗？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmed != QMessageBox.StandardButton.Yes:
+            return
         try:
-            artifact = self.model_service.load_model(file_path)
-        except Exception as exc:
+            artifact = self.model_service.load_model(file_path, trusted_source=True)
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.exception("Failed to load model artifact: %s", file_path)
             QMessageBox.critical(self, "读取失败", str(exc))
             return
 
@@ -307,6 +466,7 @@ class MoleculeDesignPage(BasePage):
         self.model_info_label.setText(
             f"{artifact['model_name']} | 目标: {artifact['target_name']} | 特征数: {len(artifact['feature_names'])}"
         )
+        self._display_feature_selection_report(artifact)
         metrics = artifact.get("metrics") or {}
         if metrics:
             self._display_metrics(artifact)
@@ -335,7 +495,8 @@ class MoleculeDesignPage(BasePage):
                 required_features=list(self.current_artifact["feature_names"]),
             )
             prediction = self.model_service.predict(self.current_artifact, feature_values)
-        except Exception as exc:
+        except (KeyError, TypeError, ValueError) as exc:
+            logger.exception("Failed to predict molecule property")
             QMessageBox.critical(self, "预测失败", str(exc))
             return
 

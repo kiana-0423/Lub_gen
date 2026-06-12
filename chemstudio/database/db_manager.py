@@ -145,6 +145,48 @@ CREATE INDEX IF NOT EXISTS idx_predictions_molecule_id
 ON predictions (molecule_id);
 """
 
+SCHEMA_TABLE_NAMES = {
+    "molecules",
+    "molecule_parameters",
+    "molecule_descriptors",
+    "molecular_features",
+    "property_data",
+    "formulas",
+    "model_records",
+    "predictions",
+}
+
+MIGRATED_COLUMNS = {
+    "molecules": {
+        "code": "TEXT",
+        "smiles": "TEXT",
+        "source": "TEXT",
+        "input_smiles": "TEXT NOT NULL DEFAULT ''",
+        "canonical_smiles": "TEXT NOT NULL DEFAULT ''",
+        "inchi": "TEXT NOT NULL DEFAULT ''",
+        "inchikey": "TEXT NOT NULL DEFAULT ''",
+        "molblock": "TEXT NOT NULL DEFAULT ''",
+        "notes": "TEXT NOT NULL DEFAULT ''",
+        "is_hidden": "INTEGER NOT NULL DEFAULT 0",
+        "updated_at": "TEXT NOT NULL DEFAULT ''",
+    },
+    "formulas": {
+        "note": "TEXT NOT NULL DEFAULT ''",
+        "conditions_json": "TEXT NOT NULL DEFAULT '{}'",
+    },
+}
+
+ALLOWED_SORT_DIRECTIONS = frozenset({"ASC", "DESC"})
+
+
+class ClosingConnection(sqlite3.Connection):
+    """SQLite connection that closes when used as a context manager."""
+
+    def __exit__(self, exc_type, exc_value, traceback) -> bool:
+        result = super().__exit__(exc_type, exc_value, traceback)
+        self.close()
+        return bool(result)
+
 
 class DatabaseManager:
     """Encapsulates SQLite schema management and CRUD operations."""
@@ -156,9 +198,17 @@ class DatabaseManager:
 
     def connect(self) -> sqlite3.Connection:
         """Return a configured SQLite connection."""
-        connection = sqlite3.connect(self.db_path)
+        connection = sqlite3.connect(
+            self.db_path,
+            timeout=30.0,
+            check_same_thread=False,
+            factory=ClosingConnection,
+        )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON;")
+        connection.execute("PRAGMA busy_timeout = 30000;")
+        connection.execute("PRAGMA journal_mode = WAL;")
+        connection.execute("PRAGMA synchronous = NORMAL;")
         return connection
 
     def initialize_database(self) -> None:
@@ -197,18 +247,24 @@ class DatabaseManager:
         column_definition: str,
     ) -> None:
         """在旧表缺失列时追加新列，避免重复迁移。"""
+        table_identifier = self._quote_identifier(table_name, SCHEMA_TABLE_NAMES)
+        allowed_columns = MIGRATED_COLUMNS.get(table_name, {})
+        if allowed_columns.get(column_name) != column_definition:
+            raise ValueError(f"Unsupported schema migration column: {table_name}.{column_name}")
+        column_identifier = self._quote_identifier(column_name, set(allowed_columns))
         columns = {
             str(row["name"])
-            for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+            for row in connection.execute(f"PRAGMA table_info({table_identifier})").fetchall()
         }
         if column_name in columns:
             return
-        connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}")
+        connection.execute(f"ALTER TABLE {table_identifier} ADD COLUMN {column_identifier} {column_definition}")
 
     def count_rows(self, table_name: str) -> int:
         """Return row count for a table."""
+        table_identifier = self._quote_identifier(table_name, SCHEMA_TABLE_NAMES)
         with self.connect() as connection:
-            row = connection.execute(f"SELECT COUNT(*) AS count FROM {table_name}").fetchone()
+            row = connection.execute(f"SELECT COUNT(*) AS count FROM {table_identifier}").fetchone()
             return int(row["count"]) if row is not None else 0
 
     def insert_molecule_record(self, record: MoleculeImportRecord) -> int:
@@ -417,7 +473,7 @@ class DatabaseManager:
         if filters:
             query += " WHERE " + " AND ".join(filters)
         sort_column = self._resolve_molecule_sort_column(sort_by)
-        direction = "DESC" if descending else "ASC"
+        direction = self._resolve_sort_direction(descending)
         query += f" ORDER BY {sort_column} {direction}, id DESC"
         if limit is not None:
             query += " LIMIT ? OFFSET ?"
@@ -1018,6 +1074,23 @@ class DatabaseManager:
             "source": "source",
         }
         return allowed.get(sort_by, "id")
+
+    @staticmethod
+    def _resolve_sort_direction(descending: bool) -> str:
+        """Resolve a public boolean flag to a safe SQL sort direction."""
+        if not isinstance(descending, bool):
+            raise ValueError("descending must be a boolean.")
+        direction = "DESC" if descending else "ASC"
+        if direction not in ALLOWED_SORT_DIRECTIONS:
+            raise ValueError(f"Unsupported SQL sort direction: {direction}")
+        return direction
+
+    @staticmethod
+    def _quote_identifier(identifier: str, allowed_values: set[str]) -> str:
+        """Return a quoted SQLite identifier from an explicit allow-list."""
+        if identifier not in allowed_values:
+            raise ValueError(f"Unsupported SQL identifier: {identifier}")
+        return f'"{identifier}"'
 
     def _loads_json_dict(self, raw_value: object) -> dict[str, object]:
         """Load a JSON object, returning an empty dict on invalid legacy values."""

@@ -5,6 +5,9 @@ import os
 import pytest
 
 
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+
 @pytest.fixture()
 def chemstudio_env(tmp_path, monkeypatch):
     database_file = tmp_path / "chemstudio.sqlite"

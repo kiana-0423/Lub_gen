@@ -6,9 +6,11 @@ from typing import Any
 import pandas as pd
 
 from chemstudio.database.db_manager import DatabaseManager
+from chemstudio.database.repositories import FormulaRepository
 from chemstudio.ml.predictor import predict_regression_value
 from chemstudio.ml.trainer import get_model_catalog, train_regression_model
 from chemstudio.utils.file_utils import normalize_field_name, parse_feature_text
+from chemstudio.validation import validate_ratio
 
 
 class FormulaService:
@@ -16,9 +18,10 @@ class FormulaService:
 
     DEFAULT_TARGET_FIELDS = ["conductivity", "capacity", "viscosity", "stability"]
 
-    def __init__(self, db_manager: DatabaseManager) -> None:
+    def __init__(self, db_manager: DatabaseManager, formula_repository: FormulaRepository | None = None) -> None:
         """保存配方模块依赖的数据库访问对象。"""
         self.db_manager = db_manager
+        self.formula_repository = formula_repository or FormulaRepository(db_manager)
 
     def get_model_catalog(self) -> list[dict[str, Any]]:
         """Return model options for the formulation-training UI."""
@@ -98,8 +101,10 @@ class FormulaService:
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"第 {index} 行比例必须是数值。") from exc
 
-            if ratio < 0:
-                raise ValueError(f"第 {index} 行比例不能为负数。")
+            try:
+                ratio = validate_ratio(ratio)
+            except ValueError as exc:
+                raise ValueError(f"第 {index} 行{exc}") from exc
 
             detail = self.db_manager.get_molecule_detail(molecule_id)
             if detail is None:
@@ -159,7 +164,7 @@ class FormulaService:
         prepared = self.prepare_components(components, auto_normalize=auto_normalize)
         normalized_targets = self.validate_target_values(target_values)
         parsed_conditions = self.parse_test_conditions(test_conditions)
-        return self.db_manager.save_formulation(
+        return self.formula_repository.save_formulation(
             formula_name=normalized_name,
             note=note.strip(),
             composition=prepared["components"],
@@ -170,20 +175,20 @@ class FormulaService:
     def list_formulations(self, limit: int = 200) -> list[dict[str, Any]]:
         """Return parsed formulation rows for the formula-design module."""
         records: list[dict[str, Any]] = []
-        for row in self.db_manager.list_formulations(limit=limit):
+        for row in self.formula_repository.list_formulations(limit=limit):
             records.append(self._deserialize_formulation_row(row))
         return records
 
     def get_formulation_detail(self, formulation_id: int) -> dict[str, Any] | None:
         """Return one parsed formulation record."""
-        row = self.db_manager.get_formulation(formulation_id)
+        row = self.formula_repository.get_formulation(formulation_id)
         if row is None:
             return None
         return self._deserialize_formulation_row(row)
 
     def delete_formulation(self, formulation_id: int) -> bool:
         """Delete a formulation record."""
-        return self.db_manager.delete_formulation(formulation_id)
+        return self.formula_repository.delete_formulation(formulation_id)
 
     def build_ratio_feature_vector(
         self,
@@ -302,7 +307,7 @@ class FormulaService:
     def save_formula_result(self, formula_name: str, prediction_result: dict[str, Any]) -> int:
         """Backward-compatible wrapper for saving a predicted formula result."""
         predicted_properties = {str(prediction_result["target_name"]): float(prediction_result["prediction"])}
-        return self.db_manager.save_formula(
+        return self.formula_repository.save_formula(
             formula_name=formula_name,
             composition=list(prediction_result["components"]),
             conditions=dict(prediction_result.get("test_conditions") or {}),
