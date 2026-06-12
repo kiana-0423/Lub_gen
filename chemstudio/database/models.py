@@ -20,6 +20,7 @@ class MoleculeImportRecord:
     notes: str = ""
     is_hidden: bool = False
     parameters: dict[str, object] = field(default_factory=dict)
+    descriptors: dict[str, float] = field(default_factory=dict)
     features: dict[str, float] = field(default_factory=dict)
     properties: dict[str, float] = field(default_factory=dict)
 

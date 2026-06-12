@@ -109,7 +109,8 @@ def test_model_service_trains_saves_loads_predicts_and_supports_formulas(tmp_pat
     assert artifact["model_name"] == "RandomForestRegressor"
     assert artifact["problem_type"] == "regression"
     assert artifact["target_name"] == "viscosity"
-    assert len(artifact["feature_names"]) == 3
+    assert {"mol_wt", "mol_logp", "tpsa"}.issubset(set(artifact["feature_names"]))
+    assert len(artifact["feature_names"]) > 3
     assert len(artifact["y_true"]) == len(artifact["y_pred"])
     assert artifact["cv_results"]["n_folds"] == 3
 

@@ -85,3 +85,43 @@ def test_data_import_service_skips_blank_rows_and_rejects_invalid_booleans(tmp_p
         assert "Invalid boolean value" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("Expected invalid boolean import to fail.")
+
+
+def test_imported_descriptors_are_hidden_from_default_wide_dataset(tmp_path, monkeypatch):
+    import chemstudio.services.data_import_service as data_import_module
+
+    monkeypatch.setattr(
+        data_import_module,
+        "compute_mordred_descriptors",
+        lambda smiles: {"ABC": 1.25, "MW": 46.07},
+    )
+
+    db_manager = DatabaseManager(tmp_path / "chemstudio.sqlite")
+    db_manager.initialize_database()
+    service = DataImportService(db_manager)
+
+    csv_path = tmp_path / "molecules.csv"
+    pd.DataFrame(
+        [
+            {
+                "name": "ethanol",
+                "smiles": "CCO",
+                "feature_manual": 3.5,
+                "property_viscosity": 1.2,
+            }
+        ]
+    ).to_csv(csv_path, index=False)
+    service.import_file(csv_path)
+
+    detail = db_manager.get_molecule_detail(1)
+    assert detail is not None
+    assert detail.descriptor_values == {"ABC": 1.25, "MW": 46.07}
+
+    public_dataset = db_manager.get_wide_dataset()
+    assert "manual" in public_dataset.columns
+    assert "ABC" not in public_dataset.columns
+    assert "MW" not in public_dataset.columns
+
+    training_dataset = db_manager.get_wide_dataset(include_mordred=True)
+    assert float(training_dataset.loc[0, "ABC"]) == 1.25
+    assert float(training_dataset.loc[0, "MW"]) == 46.07

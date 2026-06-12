@@ -283,6 +283,9 @@ class DatabaseManager:
                 ],
             )
 
+        if record.descriptors:
+            self._save_descriptors(connection, molecule_id, record.descriptors, created_at)
+
         return molecule_id
 
     def save_molecule(self, payload: dict[str, object], molecule_id: int | None = None) -> dict[str, object]:
@@ -639,6 +642,39 @@ class DatabaseManager:
                 )
             connection.commit()
 
+    def _save_descriptors(
+        self,
+        connection: sqlite3.Connection,
+        molecule_id: int,
+        descriptors: dict[str, object],
+        timestamp: str,
+        fingerprint_bits: str = "",
+    ) -> None:
+        existing = connection.execute(
+            "SELECT id FROM molecule_descriptors WHERE molecule_id = ?",
+            (molecule_id,),
+        ).fetchone()
+        payload = json.dumps(descriptors, ensure_ascii=False)
+        if existing is None:
+            connection.execute(
+                """
+                INSERT INTO molecule_descriptors (
+                    molecule_id, descriptor_values_json, fingerprint_bits, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (molecule_id, payload, fingerprint_bits, timestamp, timestamp),
+            )
+        else:
+            connection.execute(
+                """
+                UPDATE molecule_descriptors
+                SET descriptor_values_json = ?, fingerprint_bits = ?, updated_at = ?
+                WHERE molecule_id = ?
+                """,
+                (payload, fingerprint_bits, timestamp, molecule_id),
+            )
+
     def list_feature_names(self) -> list[str]:
         """Return all distinct feature names."""
         with self.connect() as connection:
@@ -746,7 +782,7 @@ class DatabaseManager:
             connection.commit()
             return int(cursor.lastrowid)
 
-    def get_wide_dataset(self, search_text: str = "") -> pd.DataFrame:
+    def get_wide_dataset(self, search_text: str = "", *, include_mordred: bool = False) -> pd.DataFrame:
         """Return a wide dataframe joined from metadata, features, and properties."""
         molecules = pd.DataFrame(self.list_molecules(search_text=search_text))
         if molecules.empty:
@@ -761,6 +797,10 @@ class DatabaseManager:
                 "SELECT molecule_id, property_name, property_value FROM property_data",
                 connection,
             )
+            descriptor_rows = pd.read_sql_query(
+                "SELECT molecule_id, descriptor_values_json FROM molecule_descriptors",
+                connection,
+            ) if include_mordred else pd.DataFrame()
 
         dataset = molecules.copy()
 
@@ -792,6 +832,22 @@ class DatabaseManager:
             if overlap:
                 property_frame = property_frame.rename(columns={column: f"property__{column}" for column in overlap})
             dataset = dataset.merge(property_frame, on="id", how="left")
+
+        if include_mordred and not descriptor_rows.empty:
+            descriptor_parts: list[dict[str, object]] = []
+            for _, row in descriptor_rows.iterrows():
+                descriptor_values = self._loads_json_dict(row["descriptor_values_json"])
+                if not descriptor_values:
+                    continue
+                descriptor_parts.append({"id": int(row["molecule_id"]), **descriptor_values})
+            if descriptor_parts:
+                descriptor_frame = pd.DataFrame(descriptor_parts)
+                overlap = [column for column in descriptor_frame.columns if column in dataset.columns and column != "id"]
+                if overlap:
+                    descriptor_frame = descriptor_frame.rename(
+                        columns={column: f"descriptor__{column}" for column in overlap}
+                    )
+                dataset = dataset.merge(descriptor_frame, on="id", how="left")
 
         ordered_columns = ["id", "name", "smiles", "source", "created_at"]
         remaining_columns = [column for column in dataset.columns if column not in ordered_columns]

@@ -23,8 +23,8 @@ class ModelService:
         self.feature_service = feature_service
 
     def get_training_dataset(self) -> pd.DataFrame:
-        """Return the current merged training dataset."""
-        return self.db_manager.get_wide_dataset()
+        """Return the current merged training dataset with descriptor columns."""
+        return self.db_manager.get_wide_dataset(include_mordred=True)
 
     def get_target_columns(self) -> list[str]:
         """Return candidate property columns for supervised learning."""

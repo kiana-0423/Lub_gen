@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 
 from chemstudio.database.db_manager import DatabaseManager
+from chemstudio.ml.featurizers import compute_mordred_descriptors
 from chemstudio.utils.file_utils import normalize_field_name, parse_feature_text
 
 try:  # pragma: no cover - optional dependency
@@ -59,7 +60,7 @@ class FeatureService:
         return [column for column in numeric_columns if column not in {"id", target_name}]
 
     def compute_descriptors(self, smiles: str) -> tuple[dict[str, float], str]:
-        """Generate basic RDKit descriptors or return a compatibility message."""
+        """Generate RDKit basics plus Mordred descriptors."""
         if not smiles.strip():
             return {}, "SMILES is empty."
         if not self.rdkit_available:
@@ -79,7 +80,9 @@ class FeatureService:
             "ring_count": float(rdMolDescriptors.CalcNumRings(molecule)),
             "fraction_csp3": float(rdMolDescriptors.CalcFractionCSP3(molecule)),
         }
-        return descriptors, "RDKit descriptors generated successfully."
+        mordred_descriptors = compute_mordred_descriptors(smiles)
+        descriptors.update(mordred_descriptors)
+        return descriptors, f"RDKit + Mordred descriptors generated ({len(mordred_descriptors)} Mordred values)."
 
     def save_descriptors(self, molecule_id: int, descriptors: dict[str, object]) -> None:
         """Persist descriptor values for a molecule."""

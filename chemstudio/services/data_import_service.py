@@ -8,6 +8,7 @@ import pandas as pd
 
 from chemstudio.database.db_manager import DatabaseManager
 from chemstudio.database.models import MoleculeImportRecord
+from chemstudio.ml.featurizers import compute_mordred_descriptors
 from chemstudio.utils.config import AppConfig
 from chemstudio.utils.file_utils import normalize_field_name, read_tabular_file
 
@@ -176,6 +177,7 @@ class DataImportService:
                     notes=str(standardized["notes"]),
                     is_hidden=bool(standardized["is_hidden"]),
                     parameters=dict(standardized["parameters"]),
+                    descriptors=self._compute_import_descriptors(str(standardized["canonical_smiles"])),
                     features=features,
                     properties=properties,
                 )
@@ -334,7 +336,12 @@ class DataImportService:
             notes=str(standardized["notes"]),
             is_hidden=bool(standardized["is_hidden"]),
             parameters=dict(standardized["parameters"]),
+            descriptors=self._compute_import_descriptors(str(standardized["canonical_smiles"])),
         )
+
+    def _compute_import_descriptors(self, smiles: str) -> dict[str, float]:
+        """Generate Mordred descriptors during import."""
+        return compute_mordred_descriptors(smiles)
 
     def _parse_parameters(self, raw_value: object, *, row_index: int) -> dict[str, object]:
         if raw_value in (None, ""):

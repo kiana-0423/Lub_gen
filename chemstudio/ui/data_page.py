@@ -138,11 +138,14 @@ class DataPage(BasePage):
 
     def refresh_page(self) -> None:
         search_text = self.search_input.text().strip() if hasattr(self, "search_input") else ""
-        self.dataset = self.db_manager.get_wide_dataset(search_text=search_text)
+        self.dataset = self.db_manager.get_wide_dataset(search_text=search_text, include_mordred=False)
         self.dataset_model.set_dataframe(self.dataset)
         self.table_view.resizeColumnsToContents()
+        descriptor_molecule_count = self.db_manager.count_rows("molecule_descriptors")
         self.status_label.setText(
-            f"当前记录数: {len(self.dataset)} | 数值列: {len(self.dataset.select_dtypes(include='number').columns)}"
+            f"当前记录数: {len(self.dataset)} | "
+            f"数值列: {len(self.dataset.select_dtypes(include='number').columns)} | "
+            f"描述符已计算: {descriptor_molecule_count} 个分子"
         )
         self._sync_table_selection()
 
