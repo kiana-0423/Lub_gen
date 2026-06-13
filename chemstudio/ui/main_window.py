@@ -19,6 +19,7 @@ from chemstudio.services import (
 from chemstudio.ui.data_page import DataPage
 from chemstudio.ui.formula_design_page import FormulaDesignPage
 from chemstudio.ui.home_page import HomePage
+from chemstudio.ui.molecule_editor_page import MoleculeEditorPage
 from chemstudio.ui.molecule_design_page import MoleculeDesignPage
 from chemstudio.utils.config import AppConfig
 
@@ -70,6 +71,10 @@ class MainWindow(QMainWindow):
             self.visualization_service,
             self.molecule_repository,
         )
+        editor_page = MoleculeEditorPage(
+            self.db_manager,
+            self.molecule_repository,
+        )
         formula_page = FormulaDesignPage(
             self.db_manager,
             self.formula_service,
@@ -81,6 +86,7 @@ class MainWindow(QMainWindow):
             "home": home_page,
             "data": data_page,
             "molecule": molecule_page,
+            "editor": editor_page,
             "formula": formula_page,
         }
         for page in pages.values():
@@ -91,6 +97,7 @@ class MainWindow(QMainWindow):
         self.pages["home"].navigate_requested.connect(self.navigate)
         self.pages["data"].home_requested.connect(lambda: self.navigate("home"))
         self.pages["molecule"].home_requested.connect(lambda: self.navigate("home"))
+        self.pages["editor"].home_requested.connect(lambda: self.navigate("home"))
         self.pages["formula"].home_requested.connect(lambda: self.navigate("home"))
 
     def _build_toolbar(self) -> None:
@@ -99,6 +106,7 @@ class MainWindow(QMainWindow):
         toolbar.addAction("首页", lambda: self.navigate("home"))
         toolbar.addAction("数据导入", lambda: self.navigate("data"))
         toolbar.addAction("分子设计", lambda: self.navigate("molecule"))
+        toolbar.addAction("分子编辑", lambda: self.navigate("editor"))
         toolbar.addAction("配方设计", lambda: self.navigate("formula"))
 
     def navigate(self, page_key: str) -> None:

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chemstudio"
-version = "1.1.0"
+version = "2.0.0"
 description = "ChemStudio desktop application for chemical and material data management."
 requires-python = ">=3.11"
 dependencies = [
@@ -32,7 +32,7 @@ chemstudio = "chemstudio.app:main"
 testpaths = ["chemstudio/tests"]
 
 [tool.setuptools.packages.find]
-include = ["chemstudio*"]
+include = ["chemstudio*", "draw*"]
 
 [tool.setuptools.package-data]
 "chemstudio.resources" = ["*.csv"]
