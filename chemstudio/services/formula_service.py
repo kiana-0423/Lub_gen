@@ -5,6 +5,7 @@ from typing import Any
 
 import pandas as pd
 
+from chemstudio.constants import FormulationRole
 from chemstudio.database.db_manager import DatabaseManager
 from chemstudio.database.repositories import FormulaRepository
 from chemstudio.ml.predictor import predict_regression_value
@@ -111,9 +112,13 @@ class FormulaService:
                 raise ValueError(f"分子 ID {molecule_id} 不存在。")
 
             note = str(component.get("note") or "").strip()
+            component_role = str(component.get("component_role") or FormulationRole.ADDITIVE).strip()
+            if component_role not in {FormulationRole.BASE_OIL, FormulationRole.ADDITIVE}:
+                component_role = FormulationRole.ADDITIVE
             prepared.append(
                 {
                     "molecule_id": molecule_id,
+                    "component_role": component_role,
                     "name": detail.name,
                     "smiles": detail.smiles,
                     "ratio": ratio,
@@ -170,6 +175,7 @@ class FormulaService:
             composition=prepared["components"],
             conditions=parsed_conditions,
             target_values=normalized_targets,
+            components=prepared["components"],
         )
 
     def list_formulations(self, limit: int = 200) -> list[dict[str, Any]]:
@@ -206,6 +212,7 @@ class FormulaService:
             f"molecule_{int(component['molecule_id'])}": float(component["ratio"]) / 100.0
             for component in prepared_components
         }
+        raw_features.update(self._build_role_features(prepared_components))
         raw_features.update(self.parse_test_conditions(test_conditions))
         aligned_features = (
             {feature_name: float(raw_features.get(feature_name, 0.0)) for feature_name in feature_names}
@@ -306,13 +313,25 @@ class FormulaService:
 
     def save_formula_result(self, formula_name: str, prediction_result: dict[str, Any]) -> int:
         """Backward-compatible wrapper for saving a predicted formula result."""
-        predicted_properties = {str(prediction_result["target_name"]): float(prediction_result["prediction"])}
-        return self.formula_repository.save_formula(
+        target_name = str(prediction_result["target_name"])
+        prediction_value = float(prediction_result["prediction"])
+        predicted_properties = {target_name: prediction_value}
+        formula_id = self.formula_repository.save_formula(
             formula_name=formula_name,
             composition=list(prediction_result["components"]),
             conditions=dict(prediction_result.get("test_conditions") or {}),
             predicted_properties=predicted_properties,
+            components=list(prediction_result["components"]),
         )
+        self.db_manager.save_formula_test_result(
+            formula_id=formula_id,
+            test_name=target_name,
+            result_value=prediction_value,
+            test_condition=dict(prediction_result.get("test_conditions") or {}),
+            is_predicted=True,
+            model_id=prediction_result.get("model_id") if isinstance(prediction_result.get("model_id"), int) else None,
+        )
+        return formula_id
 
     def _deserialize_formulation_row(self, row: dict[str, Any]) -> dict[str, Any]:
         """把数据库原始配方记录转换成带解析结果的业务对象。"""
@@ -320,7 +339,10 @@ class FormulaService:
         conditions = self._safe_json_loads(row.get("conditions_json"), default={})
         predicted_properties = self._safe_json_loads(row.get("predicted_property_json"), default={})
         normalized_components = list(composition)
-        if isinstance(composition, list):
+        structured_components = self.db_manager.get_formula_components(int(row["id"]))
+        if structured_components:
+            normalized_components = structured_components
+        elif isinstance(composition, list):
             try:
                 normalized_components = self.prepare_components(list(composition), auto_normalize=True)["components"]
             except ValueError:
@@ -343,3 +365,43 @@ class FormulaService:
             return json.loads(str(raw_value))
         except (TypeError, json.JSONDecodeError):
             return default
+
+    def _build_role_features(self, components: list[dict[str, Any]]) -> dict[str, float]:
+        features = {
+            "base_oil_total_ratio": 0.0,
+            "additive_total_ratio": 0.0,
+            "additive_count": 0.0,
+        }
+        material_rows = self._material_rows_by_molecule_id([int(component["molecule_id"]) for component in components])
+        additive_ids: set[int] = set()
+        for component in components:
+            molecule_id = int(component["molecule_id"])
+            ratio_fraction = float(component["ratio"]) / 100.0
+            metadata = material_rows.get(molecule_id, {})
+            role = str(component.get("component_role") or metadata.get("type_name") or FormulationRole.ADDITIVE)
+            category = str(metadata.get("category") or "")
+            if role == FormulationRole.BASE_OIL:
+                features["base_oil_total_ratio"] += ratio_fraction
+                continue
+            features["additive_total_ratio"] += ratio_fraction
+            additive_ids.add(molecule_id)
+            if category:
+                features[f"{category}_ratio"] = features.get(f"{category}_ratio", 0.0) + ratio_fraction
+        features["additive_count"] = float(len(additive_ids))
+        return features
+
+    def _material_rows_by_molecule_id(self, molecule_ids: list[int]) -> dict[int, dict[str, Any]]:
+        if not molecule_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in molecule_ids)
+        with self.db_manager.connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT m.id AS molecule_id, mt.type_name, mt.category, mt.sub_category
+                FROM molecules AS m
+                LEFT JOIN material_types AS mt ON mt.id = m.material_type_id
+                WHERE m.id IN ({placeholders})
+                """,
+                molecule_ids,
+            ).fetchall()
+        return {int(row["molecule_id"]): dict(row) for row in rows}

@@ -7,8 +7,13 @@ from pathlib import Path
 from PySide6.QtCore import QUrl, Qt
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
     QFileDialog,
+    QFormLayout,
     QGroupBox,
+    QComboBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -16,6 +21,9 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSplitter,
     QTableView,
+    QTableWidget,
+    QTableWidgetItem,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -65,6 +73,11 @@ class DataPage(BasePage):
         control_layout = QHBoxLayout()
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("按名称、SMILES 或来源检索")
+        self.material_type_filter = QComboBox()
+        self.material_type_filter.addItem("全部", None)
+        self.material_type_filter.addItem("基础油", "base_oil")
+        self.material_type_filter.addItem("添加剂", "additive")
+        self.material_type_filter.currentIndexChanged.connect(self.refresh_page)
 
         import_button = QPushButton("导入文件")
         import_button.clicked.connect(self._import_file)
@@ -93,6 +106,8 @@ class DataPage(BasePage):
 
         control_layout.addWidget(QLabel("检索"))
         control_layout.addWidget(self.search_input, stretch=1)
+        control_layout.addWidget(QLabel("材料类型"))
+        control_layout.addWidget(self.material_type_filter)
         control_layout.addWidget(import_button)
         control_layout.addWidget(refresh_button)
         control_layout.addWidget(self.compute_descriptors_button)
@@ -162,11 +177,27 @@ class DataPage(BasePage):
             viewer_layout.addWidget(self.molecule_view, stretch=1)
 
         layout.addWidget(viewer_box, stretch=1)
+        layout.addWidget(self._build_compatibility_panel())
         return panel
 
+    def _build_compatibility_panel(self) -> QWidget:
+        self.compatibility_box = QGroupBox("基础油相容性")
+        self.compatibility_box.setVisible(False)
+        layout = QVBoxLayout(self.compatibility_box)
+        layout.setSpacing(8)
+
+        self.compatibility_table = QTableWidget(0, 5)
+        self.compatibility_table.setHorizontalHeaderLabels(["基础油", "评分", "溶解度", "备注", "操作"])
+        self.compatibility_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.compatibility_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.compatibility_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.compatibility_table.verticalHeader().setVisible(False)
+        self.compatibility_table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.compatibility_table)
+        return self.compatibility_box
+
     def refresh_page(self) -> None:
-        search_text = self.search_input.text().strip() if hasattr(self, "search_input") else ""
-        self.dataset = self.molecule_repository.get_wide_dataset(search_text=search_text, include_mordred=False)
+        self.dataset = self._build_current_dataset(include_mordred=False)
         self.dataset_model.set_dataframe(self.dataset)
         self.table_view.resizeColumnsToContents()
         descriptor_molecule_count = self.molecule_repository.count_descriptor_rows()
@@ -176,6 +207,33 @@ class DataPage(BasePage):
             f"描述符已计算: {descriptor_molecule_count} 个分子"
         )
         self._sync_table_selection()
+
+    def _selected_material_type(self) -> str | None:
+        if not hasattr(self, "material_type_filter"):
+            return None
+        value = self.material_type_filter.currentData()
+        return str(value) if value else None
+
+    def _build_current_dataset(self, *, include_mordred: bool, search_text: str | None = None) -> object:
+        if search_text is None:
+            search_text = self.search_input.text().strip() if hasattr(self, "search_input") else ""
+        dataset = self.molecule_repository.get_wide_dataset(search_text=search_text, include_mordred=include_mordred)
+        material_type = self._selected_material_type()
+        if material_type is None or dataset.empty:
+            return dataset
+        material_type_ids = [int(row["id"]) for row in self.db_manager.list_material_types(material_type)]
+        if not material_type_ids:
+            return dataset.iloc[0:0].copy()
+        if "material_type_id" in dataset.columns:
+            return dataset[dataset["material_type_id"].isin(material_type_ids)].reset_index(drop=True)
+        matching_ids: set[int] = set()
+        for material_type_id in material_type_ids:
+            matching_rows = self.db_manager.list_molecules(
+                search_text=search_text,
+                material_type_id=material_type_id,
+            )
+            matching_ids.update(int(row["id"]) for row in matching_rows)
+        return dataset[dataset["id"].isin(matching_ids)].reset_index(drop=True)
 
     def _import_file(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
@@ -248,10 +306,9 @@ class DataPage(BasePage):
         if destination.suffix.lower() != ".csv":
             destination = destination.with_suffix(".csv")
 
-        search_text = self.search_input.text().strip() if hasattr(self, "search_input") else ""
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            row_count, column_count = self._write_features_csv(destination, search_text)
+            row_count, column_count = self._write_features_csv(destination)
             if row_count == 0 or column_count == 0:
                 QMessageBox.information(
                     self,
@@ -270,9 +327,9 @@ class DataPage(BasePage):
             f"已导出 {row_count} 行 × {column_count} 列特征数据到 {destination}"
         )
 
-    def _write_features_csv(self, destination: Path, search_text: str) -> tuple[int, int]:
+    def _write_features_csv(self, destination: Path, search_text: str | None = None) -> tuple[int, int]:
         """Write the current filtered Mordred wide table and return its shape."""
-        export_frame = self.molecule_repository.get_wide_dataset(search_text=search_text, include_mordred=True)
+        export_frame = self._build_current_dataset(include_mordred=True, search_text=search_text)
         if export_frame.empty or self.molecule_repository.count_descriptor_rows() == 0:
             return 0, 0
         export_frame.to_csv(destination, index=False, encoding="utf-8-sig")
@@ -308,6 +365,7 @@ class DataPage(BasePage):
         if self.dataset.empty:
             self.table_view.clearSelection()
             self._render_selected_molecule(error_message="暂无可显示的分子数据。")
+            self._render_compatibility_panel(None)
             return
 
         index = self.table_view.currentIndex()
@@ -337,6 +395,7 @@ class DataPage(BasePage):
                 molblock=None,
                 error_message=error_message,
             )
+            self._render_compatibility_panel(None)
             return
 
         index = self.table_view.currentIndex()
@@ -359,6 +418,7 @@ class DataPage(BasePage):
             molblock=molblock,
             error_message=generation_error,
         )
+        self._render_compatibility_panel(int(row["id"]) if row.get("id") is not None else None)
 
     def _set_molecule_view(
         self,
@@ -384,3 +444,138 @@ class DataPage(BasePage):
             error_message=error_message,
         )
         self.molecule_view.setHtml(html, QUrl("https://3dmol.org/"))
+
+    def _render_compatibility_panel(self, molecule_id: int | None) -> None:
+        if molecule_id is None or not self._is_additive_molecule(molecule_id):
+            self.compatibility_box.setVisible(False)
+            self.compatibility_table.setRowCount(0)
+            return
+
+        base_oils = self._list_base_oil_molecules()
+        compatibility_by_base = {
+            int(row["base_oil_id"]): row
+            for row in self.db_manager.get_additive_compatibilities(additive_id=molecule_id)
+        }
+        self.compatibility_table.setRowCount(0)
+        for row_index, base_oil in enumerate(base_oils):
+            base_oil_id = int(base_oil["id"])
+            compatibility = compatibility_by_base.get(base_oil_id, {})
+            self.compatibility_table.insertRow(row_index)
+            self.compatibility_table.setItem(row_index, 0, QTableWidgetItem(str(base_oil.get("name") or base_oil_id)))
+            score = compatibility.get("compatibility_score")
+            self.compatibility_table.setItem(
+                row_index,
+                1,
+                QTableWidgetItem("-" if score is None else f"{float(score):.3f}"),
+            )
+            self.compatibility_table.setItem(row_index, 2, QTableWidgetItem(str(compatibility.get("solubility") or "")))
+            self.compatibility_table.setItem(row_index, 3, QTableWidgetItem(str(compatibility.get("notes") or "")))
+            edit_button = QPushButton("编辑")
+            self._connect_compatibility_edit_button(
+                edit_button,
+                additive_id=molecule_id,
+                base_oil_id=base_oil_id,
+                base_oil_name=str(base_oil.get("name") or base_oil_id),
+                compatibility=dict(compatibility),
+            )
+            self.compatibility_table.setCellWidget(row_index, 4, edit_button)
+        if not base_oils:
+            self.compatibility_table.setRowCount(1)
+            self.compatibility_table.setSpan(0, 0, 1, 5)
+            self.compatibility_table.setItem(0, 0, QTableWidgetItem("暂无基础油记录。"))
+        self.compatibility_box.setVisible(True)
+        self.compatibility_table.resizeColumnsToContents()
+
+    def _connect_compatibility_edit_button(
+        self,
+        button: QPushButton,
+        *,
+        additive_id: int,
+        base_oil_id: int,
+        base_oil_name: str,
+        compatibility: dict[str, object],
+    ) -> None:
+        button.clicked.connect(
+            lambda _checked=False: self._edit_compatibility(
+                additive_id,
+                base_oil_id,
+                base_oil_name,
+                compatibility,
+            )
+        )
+
+    def _edit_compatibility(
+        self,
+        additive_id: int,
+        base_oil_id: int,
+        base_oil_name: str,
+        compatibility: dict[str, object],
+    ) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"编辑相容性 - {base_oil_name}")
+        layout = QFormLayout(dialog)
+
+        score_input = QDoubleSpinBox()
+        score_input.setDecimals(3)
+        score_input.setRange(0.0, 1.0)
+        score_input.setSingleStep(0.05)
+        if compatibility.get("compatibility_score") is not None:
+            score_input.setValue(float(compatibility["compatibility_score"]))
+
+        solubility_input = QComboBox()
+        for value in ["", "soluble", "partially_soluble", "insoluble"]:
+            solubility_input.addItem(value or "-", value)
+        solubility_index = solubility_input.findData(str(compatibility.get("solubility") or ""))
+        solubility_input.setCurrentIndex(solubility_index if solubility_index >= 0 else 0)
+
+        notes_input = QTextEdit()
+        notes_input.setMaximumHeight(96)
+        notes_input.setPlainText(str(compatibility.get("notes") or ""))
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+
+        layout.addRow("基础油", QLabel(base_oil_name))
+        layout.addRow("评分", score_input)
+        layout.addRow("溶解度", solubility_input)
+        layout.addRow("备注", notes_input)
+        layout.addRow(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        self.db_manager.save_additive_compatibility(
+            additive_id=additive_id,
+            base_oil_id=base_oil_id,
+            compatibility_score=float(score_input.value()),
+            solubility=str(solubility_input.currentData() or ""),
+            notes=notes_input.toPlainText().strip(),
+        )
+        self._render_compatibility_panel(additive_id)
+
+    def _is_additive_molecule(self, molecule_id: int) -> bool:
+        detail = self.db_manager.get_molecule_detail(molecule_id)
+        if detail is None or detail.material_type_id is None:
+            return False
+        material_type = self._material_type_by_id(detail.material_type_id)
+        return material_type is not None and str(material_type.get("type_name")) == "additive"
+
+    def _list_base_oil_molecules(self) -> list[dict[str, object]]:
+        base_oil_type_ids = [int(row["id"]) for row in self.db_manager.list_material_types("base_oil")]
+        base_oils: list[dict[str, object]] = []
+        for material_type_id in base_oil_type_ids:
+            base_oils.extend(
+                self.db_manager.list_molecules(
+                    include_hidden=True,
+                    material_type_id=material_type_id,
+                    sort_by="name",
+                    descending=False,
+                )
+            )
+        return base_oils
+
+    def _material_type_by_id(self, material_type_id: int) -> dict[str, object] | None:
+        for row in self.db_manager.list_material_types():
+            if int(row["id"]) == int(material_type_id):
+                return row
+        return None

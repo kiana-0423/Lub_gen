@@ -252,6 +252,42 @@ def test_import_file_maps_tribology_schema_and_one_hot_features(tmp_path, monkey
     assert first_detail.properties["wear_scar_width"] == 0.42
 
 
+def test_import_file_maps_material_type_aliases_to_foreign_key(tmp_path, monkeypatch):
+    import chemstudio.services.data_import_service as data_import_module
+
+    monkeypatch.setattr(
+        data_import_module,
+        "compute_mordred_descriptors",
+        lambda smiles: {},
+    )
+
+    db_manager = DatabaseManager(tmp_path / "chemstudio.sqlite")
+    db_manager.initialize_database()
+    service = DataImportService(db_manager)
+
+    import_path = tmp_path / "materials.csv"
+    pd.DataFrame(
+        [
+            {"分子名称": "base", "SMILES": "CCCC", "材料类型": "基础油"},
+            {"分子名称": "antiwear", "SMILES": "CCS", "添加剂类型": "抗磨剂"},
+        ]
+    ).to_csv(import_path, index=False)
+
+    service.import_file(import_path)
+
+    base_detail = db_manager.get_molecule_detail(1)
+    additive_detail = db_manager.get_molecule_detail(2)
+    assert base_detail is not None
+    assert additive_detail is not None
+    assert base_detail.material_type_id in {int(row["id"]) for row in db_manager.list_material_types("base_oil")}
+    additive_type = next(row for row in db_manager.list_material_types("additive") if row["category"] == "antiwear")
+    assert additive_detail.material_type_id == int(additive_type["id"])
+    assert db_manager.count_molecules(material_type_id=int(additive_type["id"])) == 1
+    wide_dataset = db_manager.get_wide_dataset()
+    additive_row = wide_dataset[wide_dataset["id"] == 2].iloc[0]
+    assert additive_row["material_type_id"] == int(additive_type["id"])
+
+
 def test_compute_missing_descriptors_backfills_existing_molecules(tmp_path, monkeypatch):
     import chemstudio.services.data_import_service as data_import_module
 

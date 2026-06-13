@@ -34,6 +34,7 @@ from chemstudio.ui.widgets import BasePage, SHAPForceWidget, SHAPSummaryWidget
 
 
 logger = logging.getLogger(__name__)
+COMPATIBILITY_WARNING_THRESHOLD = 0.5
 
 
 class FormulaTrainingWorker(QObject):
@@ -232,6 +233,12 @@ class FormulaDesignPage(BasePage):
 
         self.learning_component_table = self._create_component_table()
         self.learning_ratio_summary_label = QLabel("当前组分数: 0 | 比例总和: 0.0000")
+        self.learning_compatibility_warning_label = QLabel()
+        self.learning_compatibility_warning_label.setWordWrap(True)
+        self.learning_compatibility_warning_label.setVisible(False)
+        self.learning_compatibility_warning_label.setStyleSheet(
+            "background-color: #fff4ce; color: #5c3b00; border: 1px solid #e0b341; padding: 6px;"
+        )
 
         save_button = QPushButton("保存配方")
         save_button.clicked.connect(self._save_learning_formulation)
@@ -239,6 +246,7 @@ class FormulaDesignPage(BasePage):
         components_layout.addLayout(component_actions)
         components_layout.addWidget(self.learning_component_table, stretch=1)
         components_layout.addWidget(self.learning_ratio_summary_label)
+        components_layout.addWidget(self.learning_compatibility_warning_label)
         components_layout.addWidget(save_button, alignment=Qt.AlignmentFlag.AlignLeft)
 
         layout.addWidget(info_box)
@@ -385,6 +393,12 @@ class FormulaDesignPage(BasePage):
 
         self.prediction_component_table = self._create_component_table()
         self.prediction_ratio_summary_label = QLabel("当前组分数: 0 | 比例总和: 0.0000")
+        self.prediction_compatibility_warning_label = QLabel()
+        self.prediction_compatibility_warning_label.setWordWrap(True)
+        self.prediction_compatibility_warning_label.setVisible(False)
+        self.prediction_compatibility_warning_label.setStyleSheet(
+            "background-color: #fff4ce; color: #5c3b00; border: 1px solid #e0b341; padding: 6px;"
+        )
         self.prediction_test_conditions_input = QTextEdit()
         self.prediction_test_conditions_input.setMaximumHeight(96)
         self.prediction_test_conditions_input.setPlaceholderText(
@@ -398,6 +412,7 @@ class FormulaDesignPage(BasePage):
         predictor_layout.addLayout(actions)
         predictor_layout.addWidget(self.prediction_component_table, stretch=1)
         predictor_layout.addWidget(self.prediction_ratio_summary_label)
+        predictor_layout.addWidget(self.prediction_compatibility_warning_label)
         predictor_layout.addWidget(QLabel("测试条件"))
         predictor_layout.addWidget(self.prediction_test_conditions_input)
         predictor_layout.addWidget(self.prediction_result_text, stretch=1)
@@ -452,8 +467,8 @@ class FormulaDesignPage(BasePage):
                 self.training_model_combo.setCurrentIndex(index)
 
     def _create_component_table(self) -> QTableWidget:
-        table = QTableWidget(0, 4)
-        table.setHorizontalHeaderLabels(["分子", "SMILES", "比例", "备注"])
+        table = QTableWidget(0, 5)
+        table.setHorizontalHeaderLabels(["分子", "SMILES", "角色", "比例", "备注"])
         table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         table.verticalHeader().setVisible(False)
@@ -473,6 +488,7 @@ class FormulaDesignPage(BasePage):
         table: QTableWidget,
         *,
         molecule_id: int | None = None,
+        component_role: str = "additive",
         ratio: float = 0.0,
         note: str = "",
     ) -> None:
@@ -486,15 +502,23 @@ class FormulaDesignPage(BasePage):
         smiles_item.setFlags(smiles_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         table.setItem(row, 1, smiles_item)
 
+        role_combo = QComboBox()
+        role_combo.addItem("基础油", "base_oil")
+        role_combo.addItem("添加剂", "additive")
+        role_index = role_combo.findData(component_role)
+        role_combo.setCurrentIndex(role_index if role_index >= 0 else 1)
+        role_combo.currentIndexChanged.connect(lambda _index: self._update_compatibility_warning_for_table(table))
+        table.setCellWidget(row, 2, role_combo)
+
         ratio_spin = QDoubleSpinBox()
         ratio_spin.setDecimals(4)
         ratio_spin.setRange(0.0, 100000.0)
         ratio_spin.setValue(float(ratio))
         ratio_spin.valueChanged.connect(lambda _value: self._update_ratio_summary_for_table(table))
-        table.setCellWidget(row, 2, ratio_spin)
+        table.setCellWidget(row, 3, ratio_spin)
 
         note_item = QTableWidgetItem(note)
-        table.setItem(row, 3, note_item)
+        table.setItem(row, 4, note_item)
 
         if molecule_id is not None:
             selected_index = next(
@@ -508,6 +532,7 @@ class FormulaDesignPage(BasePage):
             combo.setCurrentIndex(selected_index)
 
         self._update_ratio_summary_for_table(table)
+        self._update_compatibility_warning_for_table(table)
 
     def _handle_molecule_changed(self, table: QTableWidget, combo: QComboBox) -> None:
         row = self._find_widget_row(table, combo)
@@ -516,10 +541,11 @@ class FormulaDesignPage(BasePage):
         molecule = combo.currentData()
         smiles_text = str(molecule.get("smiles") or "") if isinstance(molecule, dict) else ""
         table.item(row, 1).setText(smiles_text)
+        self._update_compatibility_warning_for_table(table)
 
     def _find_widget_row(self, table: QTableWidget, widget: QWidget) -> int:
         for row in range(table.rowCount()):
-            if table.cellWidget(row, 0) is widget or table.cellWidget(row, 2) is widget:
+            if any(table.cellWidget(row, column) is widget for column in (0, 2, 3)):
                 return row
         return -1
 
@@ -528,17 +554,21 @@ class FormulaDesignPage(BasePage):
         if row >= 0:
             table.removeRow(row)
         self._update_ratio_summary(table, summary_label)
+        self._update_compatibility_warning_for_table(table)
 
     def _snapshot_component_table(self, table: QTableWidget) -> list[dict[str, Any]]:
         snapshot: list[dict[str, Any]] = []
         for row in range(table.rowCount()):
             combo = table.cellWidget(row, 0)
-            ratio_spin = table.cellWidget(row, 2)
-            note_item = table.item(row, 3)
+            role_combo = table.cellWidget(row, 2)
+            ratio_spin = table.cellWidget(row, 3)
+            note_item = table.item(row, 4)
             molecule = combo.currentData() if isinstance(combo, QComboBox) else None
+            component_role = role_combo.currentData() if isinstance(role_combo, QComboBox) else "additive"
             snapshot.append(
                 {
                     "molecule_id": int(molecule["id"]) if isinstance(molecule, dict) else None,
+                    "component_role": str(component_role or "additive"),
                     "ratio": float(ratio_spin.value()) if isinstance(ratio_spin, QDoubleSpinBox) else 0.0,
                     "note": note_item.text().strip() if note_item is not None else "",
                 }
@@ -556,10 +586,12 @@ class FormulaDesignPage(BasePage):
             self._insert_component_row(
                 table,
                 molecule_id=component.get("molecule_id"),
+                component_role=str(component.get("component_role") or "additive"),
                 ratio=float(component.get("ratio", 0.0)),
                 note=str(component.get("note") or ""),
             )
         self._update_ratio_summary(table, summary_label)
+        self._update_compatibility_warning_for_table(table)
 
     def _refresh_component_table_catalog(self, table: QTableWidget, summary_label: QLabel) -> None:
         snapshot = self._snapshot_component_table(table)
@@ -574,21 +606,81 @@ class FormulaDesignPage(BasePage):
     def _update_ratio_summary(self, table: QTableWidget, summary_label: QLabel) -> None:
         total = 0.0
         for row in range(table.rowCount()):
-            ratio_spin = table.cellWidget(row, 2)
+            ratio_spin = table.cellWidget(row, 3)
             if isinstance(ratio_spin, QDoubleSpinBox):
                 total += float(ratio_spin.value())
         summary_label.setText(f"当前组分数: {table.rowCount()} | 比例总和: {total:.4f}")
+
+    def _update_compatibility_warning_for_table(self, table: QTableWidget) -> None:
+        label = self._compatibility_warning_label_for_table(table)
+        if label is None:
+            return
+        warnings = self._build_compatibility_warnings(table)
+        if not warnings:
+            label.clear()
+            label.setVisible(False)
+            return
+        label.setText("相容性警告: " + "；".join(warnings))
+        label.setVisible(True)
+
+    def _compatibility_warning_label_for_table(self, table: QTableWidget) -> QLabel | None:
+        if table is self.learning_component_table:
+            return self.learning_compatibility_warning_label
+        if table is self.prediction_component_table:
+            return self.prediction_compatibility_warning_label
+        return None
+
+    def _build_compatibility_warnings(self, table: QTableWidget) -> list[str]:
+        components = self._collect_components_from_table(table)
+        bases = [component for component in components if component.get("component_role") == "base_oil" and component.get("molecule_id")]
+        additives = [component for component in components if component.get("component_role") == "additive" and component.get("molecule_id")]
+        warnings: list[str] = []
+        for additive in additives:
+            additive_id = int(additive["molecule_id"])
+            additive_name = self._molecule_name(additive_id)
+            for base in bases:
+                base_oil_id = int(base["molecule_id"])
+                rows = self.db_manager.get_additive_compatibilities(
+                    additive_id=additive_id,
+                    base_oil_id=base_oil_id,
+                )
+                if not rows:
+                    continue
+                compatibility = rows[0]
+                score = compatibility.get("compatibility_score")
+                solubility = str(compatibility.get("solubility") or "").strip().lower()
+                is_low_score = score is not None and float(score) < COMPATIBILITY_WARNING_THRESHOLD
+                is_insoluble = solubility == "insoluble"
+                if is_low_score or is_insoluble:
+                    base_name = self._molecule_name(base_oil_id)
+                    reason_parts = []
+                    if is_low_score:
+                        reason_parts.append(f"评分 {float(score):.3f}")
+                    if is_insoluble:
+                        reason_parts.append("不溶")
+                    warnings.append(f"{additive_name} 与 {base_name} ({', '.join(reason_parts)})")
+        return warnings
+
+    def _molecule_name(self, molecule_id: int) -> str:
+        for molecule in self.molecule_catalog:
+            if int(molecule["id"]) == int(molecule_id):
+                return str(molecule.get("name") or molecule_id)
+        detail = self.db_manager.get_molecule_detail(molecule_id)
+        return detail.name if detail is not None else str(molecule_id)
 
     def _collect_components_from_table(self, table: QTableWidget) -> list[dict[str, Any]]:
         components: list[dict[str, Any]] = []
         for row in range(table.rowCount()):
             combo = table.cellWidget(row, 0)
-            ratio_spin = table.cellWidget(row, 2)
-            note_item = table.item(row, 3)
+            role_combo = table.cellWidget(row, 2)
+            ratio_spin = table.cellWidget(row, 3)
+            note_item = table.item(row, 4)
             molecule = combo.currentData() if isinstance(combo, QComboBox) else None
+            component_role = role_combo.currentData() if isinstance(role_combo, QComboBox) else "additive"
             components.append(
                 {
                     "molecule_id": molecule["id"] if isinstance(molecule, dict) else None,
+                    "component_role": str(component_role or "additive"),
                     "ratio": float(ratio_spin.value()) if isinstance(ratio_spin, QDoubleSpinBox) else 0.0,
                     "note": note_item.text().strip() if note_item is not None else "",
                 }
@@ -645,6 +737,7 @@ class FormulaDesignPage(BasePage):
             field_input.clear()
         self.learning_component_table.setRowCount(0)
         self._update_ratio_summary(self.learning_component_table, self.learning_ratio_summary_label)
+        self._update_compatibility_warning_for_table(self.learning_component_table)
 
     def _refresh_saved_formulations(self) -> None:
         formulations = self.formula_service.list_formulations()
@@ -698,8 +791,10 @@ class FormulaDesignPage(BasePage):
 
         lines.extend(["", "组分列表:"])
         for component in formulation["components"]:
+            role_label = "基础油" if component.get("component_role") == "base_oil" else "添加剂"
             lines.append(
                 f"- {component.get('name', '-')}"
+                f" | role={role_label}"
                 f" | ratio={float(component.get('ratio', 0.0)):.4f}"
                 f" | note={component.get('note') or '-'}"
             )

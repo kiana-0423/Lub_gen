@@ -17,3 +17,4 @@ Traceback (most recent call last):
     raise RuntimeError(f"Model `{model_row['label']}` is not available in this environment.")
 RuntimeError: Model `XGBoost` is not available in this environment.
 2026-06-13 08:41:32,719 | INFO | chemstudio.ml.featurizers.mordred_featurizer | Initialized Mordred calculator with 1613 descriptors.
+2026-06-13 19:06:27,098 | INFO | chemstudio.ml.featurizers.mordred_featurizer | Initialized Mordred calculator with 1613 descriptors.

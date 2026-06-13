@@ -38,7 +38,7 @@ class DescriptorRepository:
     def get_wide_dataset(self, search_text: str = "", *, include_mordred: bool = False) -> pd.DataFrame:
         molecules = pd.DataFrame(self.db_manager.list_molecules(search_text=search_text))
         if molecules.empty:
-            return pd.DataFrame(columns=["id", "name", "smiles", "source", "created_at"])
+            return pd.DataFrame(columns=["id", "name", "material_type_id", "smiles", "source", "created_at"])
 
         with self.db_manager.connect() as connection:
             feature_rows = pd.read_sql_query(
@@ -101,7 +101,7 @@ class DescriptorRepository:
                     )
                 dataset = dataset.merge(descriptor_frame, on="id", how="left")
 
-        ordered_columns = ["id", "name", "smiles", "source", "created_at"]
+        ordered_columns = ["id", "name", "material_type_id", "smiles", "source", "created_at"]
         remaining_columns = [column for column in dataset.columns if column not in ordered_columns]
         return dataset[ordered_columns + sorted(remaining_columns)]
 

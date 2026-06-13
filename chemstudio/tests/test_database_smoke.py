@@ -172,3 +172,55 @@ def test_database_migrates_legacy_unique_canonical_smiles_constraint(tmp_path):
 
     assert first_id != second_id
     assert db_manager.count_rows("molecules") == 2
+
+
+def test_database_migrates_lubricant_property_data_to_rich_table(tmp_path):
+    database_path = tmp_path / "legacy_properties.sqlite"
+    with sqlite3.connect(database_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE molecules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT UNIQUE,
+                name TEXT NOT NULL,
+                smiles TEXT,
+                input_smiles TEXT NOT NULL DEFAULT '',
+                canonical_smiles TEXT NOT NULL DEFAULT '',
+                inchi TEXT NOT NULL DEFAULT '',
+                inchikey TEXT NOT NULL DEFAULT '',
+                molblock TEXT NOT NULL DEFAULT '',
+                notes TEXT NOT NULL DEFAULT '',
+                is_hidden INTEGER NOT NULL DEFAULT 0,
+                source TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT ''
+            );
+            CREATE TABLE property_data (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                molecule_id INTEGER NOT NULL,
+                property_name TEXT NOT NULL,
+                property_value REAL
+            );
+            INSERT INTO molecules (id, code, name, smiles, source, created_at)
+            VALUES (1, 'L-001', 'sample', 'CCO', '', '2026-01-01T00:00:00+00:00');
+            INSERT INTO property_data (molecule_id, property_name, property_value)
+            VALUES (1, 'wear_scar_width', 0.42);
+            """
+        )
+
+    db_manager = DatabaseManager(database_path)
+    db_manager.initialize_database()
+
+    with db_manager.connect() as connection:
+        row = connection.execute(
+            """
+            SELECT property_name, property_value, property_unit
+            FROM lubricant_properties
+            WHERE molecule_id = 1
+            """
+        ).fetchone()
+
+    assert row is not None
+    assert row["property_name"] == "wear_scar_width"
+    assert row["property_value"] == 0.42
+    assert row["property_unit"] == "mm"

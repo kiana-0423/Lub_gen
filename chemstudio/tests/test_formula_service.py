@@ -25,11 +25,50 @@ def test_formula_service_saves_lists_and_deletes_formulations(chemstudio_env):
     assert formulations[0]["note"] == "test note"
     assert formulations[0]["target_values"]["conductivity"] == 12.5
     assert formulations[0]["components"][0]["name"] == "solvent-a"
+    assert formulations[0]["components"][0]["component_role"] == "additive"
     assert formulations[0]["test_conditions"]["condition_temperature"] == 25.0
     assert formulations[0]["test_conditions"]["condition_pressure"] == 1.0
+    assert db_manager.get_formula_components(record_id)[0]["component_role"] == "additive"
 
     assert service.delete_formulation(record_id) is True
     assert service.list_formulations() == []
+
+
+def test_formula_service_preserves_component_roles_and_role_features(chemstudio_env):
+    db_manager = DatabaseManager(chemstudio_env["database_path"])
+    db_manager.initialize_database()
+    base_type_id = int(db_manager.list_material_types("base_oil")[0]["id"])
+    additive_type_id = next(
+        int(row["id"])
+        for row in db_manager.list_material_types("additive")
+        if row["category"] == "antioxidant"
+    )
+    base_id = db_manager.insert_molecule_record(
+        MoleculeImportRecord(name="base", smiles="CCCC", material_type_id=base_type_id)
+    )
+    additive_id = db_manager.insert_molecule_record(
+        MoleculeImportRecord(name="antioxidant", smiles="CCO", material_type_id=additive_type_id)
+    )
+    service = FormulaService(db_manager)
+
+    record_id = service.save_formulation(
+        formula_name="role-formula",
+        note="",
+        components=[
+            {"molecule_id": base_id, "component_role": "base_oil", "ratio": 90.0},
+            {"molecule_id": additive_id, "component_role": "additive", "ratio": 10.0},
+        ],
+        target_values={"viscosity": 1.0},
+    )
+
+    detail = service.get_formulation_detail(record_id)
+    assert detail is not None
+    assert [component["component_role"] for component in detail["components"]] == ["base_oil", "additive"]
+    feature_payload = service.build_ratio_feature_vector(detail["components"], auto_normalize=True)
+    assert feature_payload["features"]["base_oil_total_ratio"] == 0.9
+    assert feature_payload["features"]["additive_total_ratio"] == 0.1
+    assert feature_payload["features"]["additive_count"] == 1.0
+    assert feature_payload["features"]["antioxidant_ratio"] == 0.1
 
 
 def test_formula_service_auto_normalizes_component_ratios(chemstudio_env):

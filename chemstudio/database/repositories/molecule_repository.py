@@ -37,6 +37,7 @@ class MoleculeRepository:
         include_hidden: bool = False,
         hidden_only: bool = False,
         parameter_filters: Mapping[str, object] | None = None,
+        material_type_id: int | None = None,
         sort_by: str = "updated_at",
         descending: bool = True,
     ) -> dict[str, object]:
@@ -47,6 +48,7 @@ class MoleculeRepository:
             include_hidden=include_hidden,
             hidden_only=hidden_only,
             parameter_filters=dict(parameter_filters or {}),
+            material_type_id=material_type_id,
             sort_by=sort_by,
             descending=descending,
         )
@@ -59,10 +61,12 @@ class MoleculeRepository:
         keyword: str | None = None,
         limit: int | None = None,
         offset: int = 0,
+        material_type_id: int | None = None,
     ) -> list[dict[str, object]]:
         items = self.db_manager.list_molecules(
             keyword=keyword,
             include_hidden=include_hidden,
+            material_type_id=material_type_id,
             sort_by="id",
             descending=False,
             limit=limit,

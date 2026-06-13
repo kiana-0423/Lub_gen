@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from chemstudio.constants import LubricantPropertyName, MATERIAL_TYPE_ALIASES
 from chemstudio.database.db_manager import DatabaseManager
 from chemstudio.database.models import MoleculeImportRecord
 from chemstudio.ml.featurizers import compute_mordred_descriptors
@@ -74,6 +75,9 @@ class DataImportService:
     }
     CATEGORICAL_FEATURE_COLUMNS = {
         "base_oil",
+        "material_type",
+        "additive_category",
+        "base_oil_category",
         "experiment_name",
         "test_mode",
         "upper_material",
@@ -88,6 +92,16 @@ class DataImportService:
         "wear_scar_width",
         "wear_scar_depth",
         "wear_spot_diameter",
+        "oxidation_induction_time",
+        LubricantPropertyName.WELD_LOAD,
+        "static_friction_coefficient",
+        "wear_volume",
+        LubricantPropertyName.KINEMATIC_VISCOSITY_40C,
+        LubricantPropertyName.KINEMATIC_VISCOSITY_100C,
+        LubricantPropertyName.VISCOSITY_INDEX,
+        LubricantPropertyName.POUR_POINT,
+        LubricantPropertyName.FLASH_POINT,
+        LubricantPropertyName.TOTAL_ACID_NUMBER,
     }
     COLUMN_ALIASES = {
         "编号": "sample_id",
@@ -149,6 +163,41 @@ class DataImportService:
         "wear_scar_depth": "wear_scar_depth",
         "磨斑直径": "wear_spot_diameter",
         "wear_spot_diameter": "wear_spot_diameter",
+        "氧化诱导时间": "oxidation_induction_time",
+        "oxidation_induction_time": "oxidation_induction_time",
+        "烧结负荷": "weld_load",
+        "烧结负荷/n": "weld_load",
+        "weld_load": "weld_load",
+        "静摩擦系数": "static_friction_coefficient",
+        "static_friction_coefficient": "static_friction_coefficient",
+        "磨损体积": "wear_volume",
+        "wear_volume": "wear_volume",
+        "40℃运动粘度": "kinematic_viscosity_40c",
+        "40°c运动粘度": "kinematic_viscosity_40c",
+        "kinematic_viscosity_40c": "kinematic_viscosity_40c",
+        "100℃运动粘度": "kinematic_viscosity_100c",
+        "100°c运动粘度": "kinematic_viscosity_100c",
+        "kinematic_viscosity_100c": "kinematic_viscosity_100c",
+        "粘度指数": "viscosity_index",
+        "viscosity_index": "viscosity_index",
+        "倾点": "pour_point",
+        "倾点/℃": "pour_point",
+        "pour_point": "pour_point",
+        "闪点": "flash_point",
+        "闪点/℃": "flash_point",
+        "flash_point": "flash_point",
+        "酸值": "total_acid_number",
+        "total_acid_number": "total_acid_number",
+        "材料类型": "material_type",
+        "material_type": "material_type",
+        "添加剂类型": "additive_category",
+        "添加剂种类": "additive_category",
+        "additive_category": "additive_category",
+        "基础油类型": "base_oil_category",
+        "base_oil_category": "base_oil_category",
+        "添加量": "additive_concentration",
+        "添加量/wt%": "additive_concentration",
+        "添加量/vol%": "additive_concentration",
     }
     PROPERTY_KEYWORDS = {
         "property",
@@ -171,6 +220,7 @@ class DataImportService:
     def __init__(self, db_manager: DatabaseManager) -> None:
         """保存数据库访问依赖，供导入流程复用。"""
         self.db_manager = db_manager
+        self._material_type_rows: list[dict[str, object]] | None = None
 
     def import_file(self, file_path: str | Path) -> dict[str, object]:
         """Import a CSV, Excel, or JSON file into the database."""
@@ -335,6 +385,7 @@ class DataImportService:
             features.update(self._collect_categorical_features(row, categorical_feature_columns, canonical_columns, category_values))
             properties = self._collect_numeric_values(row, property_columns)
             parameters = self._collect_parameter_values(row, parameter_columns)
+            material_type_id = self._resolve_material_type_id(parameters)
 
             if not any([name.strip(), smiles.strip(), features, properties]):
                 continue
@@ -354,6 +405,7 @@ class DataImportService:
                     "source": source,
                     "features": features,
                     "properties": properties,
+                    "material_type_id": material_type_id,
                 }
             )
 
@@ -379,6 +431,7 @@ class DataImportService:
                     molblock=str(standardized["molblock"]),
                     notes=str(standardized["notes"]),
                     is_hidden=bool(standardized["is_hidden"]),
+                    material_type_id=item["material_type_id"] if isinstance(item["material_type_id"], int) else None,
                     parameters=dict(standardized["parameters"]),
                     descriptors=descriptors,
                     features=dict(item["features"]),
@@ -522,6 +575,50 @@ class DataImportService:
         key = normalize_field_name(normalized)
         return key or str(normalized).strip().lower().replace(" ", "_")
 
+    def _resolve_material_type_id(self, parameters: Mapping[str, object]) -> int | None:
+        type_name = self._canonical_material_value(parameters.get("material_type"))
+        category = ""
+        if parameters.get("additive_category") not in (None, ""):
+            type_name = "additive"
+            category = self._canonical_material_value(parameters.get("additive_category"))
+        elif parameters.get("base_oil_category") not in (None, ""):
+            type_name = "base_oil"
+            category = self._canonical_material_value(parameters.get("base_oil_category"))
+
+        if not type_name and not category:
+            return None
+
+        rows = self._get_material_type_rows()
+        matches = rows
+        if type_name in {"base_oil", "additive"}:
+            matches = [row for row in matches if str(row["type_name"]) == type_name]
+        if category:
+            category_matches = [
+                row
+                for row in matches
+                if self._canonical_material_value(row["category"]) == category
+                or self._canonical_material_value(row["sub_category"]) == category
+            ]
+            if category_matches:
+                matches = category_matches
+        return int(matches[0]["id"]) if matches else None
+
+    def _get_material_type_rows(self) -> list[dict[str, object]]:
+        if self._material_type_rows is None:
+            self._material_type_rows = self.db_manager.list_material_types()
+        return self._material_type_rows
+
+    def _canonical_material_value(self, value: object) -> str:
+        normalized = self._normalize_cell(value)
+        if normalized in (None, ""):
+            return ""
+        text = str(normalized).strip()
+        candidates = [text, text.lower(), normalize_field_name(text)]
+        for candidate in candidates:
+            if candidate in MATERIAL_TYPE_ALIASES:
+                return MATERIAL_TYPE_ALIASES[candidate]
+        return candidates[-1]
+
     def _load_json(self, path: Path) -> list[Mapping[str, object]]:
         payload = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(payload, list):
@@ -569,6 +666,7 @@ class DataImportService:
 
     def _record_to_import_record(self, record: Mapping[str, object], *, source_label: str) -> MoleculeImportRecord:
         standardized = self.validate_and_standardize(record)
+        material_type_id = self._resolve_material_type_id(dict(standardized["parameters"]))
         return MoleculeImportRecord(
             name=str(standardized["name"]),
             smiles=str(standardized["canonical_smiles"]),
@@ -581,6 +679,7 @@ class DataImportService:
             molblock=str(standardized["molblock"]),
             notes=str(standardized["notes"]),
             is_hidden=bool(standardized["is_hidden"]),
+            material_type_id=material_type_id,
             parameters=dict(standardized["parameters"]),
             descriptors=self._compute_import_descriptors(str(standardized["canonical_smiles"])),
         )

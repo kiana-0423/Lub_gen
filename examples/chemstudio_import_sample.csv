@@ -1,7 +1,7 @@
-sample_id,smiles,molecule_name,molecular_formula,base_oil,additive_concentration,experiment_name,test_mode,upper_material,upper_type,upper_diameter,lower_material,lower_type,probe_diameter,lower_length,lower_width,lower_thickness,load,stroke,frequency,duration,speed,temperature,oxidation_onset_temperature,extreme_pressure_load,average_friction_coefficient,wear_scar_width,wear_scar_depth,wear_spot_diameter
-S-001,CCO,ethanol,C2H6O,PAO4,1.0,oxidation_screen,SRV,GCr15,ball,10.0,GCr15,disk,10.0,24.0,7.9,7.9,100,1.0,50,1800,1450,25,215,620,0.088,0.42,3.8,0.53
-S-002,CCCO,propanol,C3H8O,PAO4,1.5,oxidation_screen,SRV,GCr15,ball,10.0,GCr15,disk,10.0,24.0,7.9,7.9,120,1.0,50,1800,1450,25,228,690,0.081,0.39,3.4,0.49
-S-003,CCCCO,butanol,C4H10O,PAO6,2.0,load_sweep,SRV,GCr15,ball,10.0,Steel,plate,10.0,24.0,7.9,7.9,150,1.0,50,1800,1450,40,241,735,0.075,0.35,3.1,0.45
-S-004,CC(C)=O,acetone,C3H6O,Ester,1.0,load_sweep,FourBall,Steel,ball,12.7,Steel,cup,12.7,25.0,8.0,8.0,200,0.8,40,600,1450,25,198,540,0.102,0.51,4.5,0.64
-S-005,CC#N,acetonitrile,C2H3N,Ester,1.5,temperature_sweep,FourBall,Steel,ball,12.7,Steel,cup,12.7,25.0,8.0,8.0,250,0.8,40,600,1450,60,206,580,0.096,0.47,4.1,0.60
-S-006,COC(=O)OC,dimethyl_carbonate,C3H6O3,PAO6,2.5,temperature_sweep,SRV,Ceramic,ball,10.0,GCr15,disk,10.0,24.0,7.9,7.9,180,1.2,60,2400,1200,80,252,780,0.069,0.31,2.7,0.41
+sample_id,smiles,molecule_name,material_type,base_oil_category,additive_category,base_oil,additive_concentration,experiment_name,test_mode,upper_material,upper_type,probe_diameter,lower_material,lower_type,load,stroke,frequency,duration,speed,temperature,oxidation_onset_temperature,weld_load,average_friction_coefficient,wear_scar_width,kinematic_viscosity_40c,kinematic_viscosity_100c,viscosity_index,pour_point,flash_point,total_acid_number
+BO-001,CCCCCCCCCCCCCCCC,PAO_base_oil,base_oil,PAO,,PAO,0.0,base_oil_characterization,FourBall,Steel,ball,12.7,Steel,cup,392,0.8,40,600,1450,25,238,980,0.092,0.48,46.2,7.9,138,-54,228,0.02
+BO-002,CCCCCCCCCCCCCCCCCC,ester_base_oil,base_oil,ester,,Ester,0.0,base_oil_characterization,SRV,GCr15,ball,10.0,GCr15,disk,200,1.0,50,1800,1200,40,252,1040,0.087,0.43,68.5,10.8,156,-42,246,0.04
+AD-001,CC(C)(C)c1cc(O)ccc1,phenolic_antioxidant,additive,,antioxidant,PAO,1.0,antioxidant_screen,FourBall,Steel,ball,12.7,Steel,cup,392,0.8,40,600,1450,25,286,1100,0.081,0.39,47.1,8.0,142,-51,232,0.05
+AD-002,CCOP(=S)(OCC)S,phosphorus_antiwear,additive,,antiwear,PAO,1.5,antiwear_screen,FourBall,Steel,ball,12.7,Steel,cup,490,0.8,40,600,1450,25,244,1560,0.068,0.31,48.0,8.2,144,-48,226,0.08
+AD-003,CCSCC,extreme_pressure_additive,additive,,extreme_pressure,Ester,2.0,ep_screen,SRV,GCr15,ball,10.0,GCr15,disk,300,1.2,60,2400,1200,80,230,1860,0.073,0.35,70.4,11.0,158,-39,242,0.10
+AD-004,COC(=O)C(C)C,pour_point_depressant,additive,,pour_point_depressant,PAO,0.5,low_temp_screen,SRV,GCr15,ball,10.0,GCr15,disk,150,1.0,50,1800,1200,-20,218,920,0.095,0.46,45.8,7.7,136,-60,224,0.03

@@ -19,6 +19,7 @@ class FormulaRepository:
         predicted_properties: dict[str, float],
         note: str = "",
         conditions: dict[str, float] | None = None,
+        components: list[dict[str, object]] | None = None,
     ) -> int:
         created_at = datetime.now(timezone.utc).isoformat()
         with self.db_manager.connect() as connection:
@@ -36,8 +37,11 @@ class FormulaRepository:
                     created_at,
                 ),
             )
+            formula_id = int(cursor.lastrowid)
+            if components is not None:
+                self.db_manager._replace_formula_components(connection, formula_id, components)
             connection.commit()
-            return int(cursor.lastrowid)
+            return formula_id
 
     def save_formulation(
         self,
@@ -46,6 +50,7 @@ class FormulaRepository:
         composition: list[dict[str, object]],
         target_values: dict[str, float],
         conditions: dict[str, float] | None = None,
+        components: list[dict[str, object]] | None = None,
     ) -> int:
         return self.save_formula(
             formula_name=formula_name,
@@ -53,6 +58,7 @@ class FormulaRepository:
             composition=composition,
             conditions=conditions,
             predicted_properties=target_values,
+            components=components,
         )
 
     def list_formulas(self, limit: int = 100) -> list[dict[str, object]]:
@@ -82,6 +88,13 @@ class FormulaRepository:
                 (formulation_id,),
             ).fetchone()
         return dict(row) if row is not None else None
+
+    def get_formula_detail(self, formula_id: int) -> dict[str, object] | None:
+        formulation = self.get_formulation(formula_id)
+        if formulation is None:
+            return None
+        formulation["components"] = self.db_manager.get_formula_components(formula_id)
+        return formulation
 
     def delete_formulation(self, formulation_id: int) -> bool:
         with self.db_manager.connect() as connection:
